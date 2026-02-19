@@ -4,74 +4,51 @@ using UnityEngine;
 namespace GeoCity3D.Geometry
 {
     /// <summary>
-    /// Generates procedural tree meshes — tropical style with large canopies.
+    /// Generates solid architectural-style trees.
+    /// Dark-green sphere canopies on grounded trunks with base disc.
+    /// Clean maquette style with volumetric geometry.
     /// </summary>
     public static class TreeBuilder
     {
-        private static readonly Color[] TrunkColors = new Color[]
+        private static readonly Color[] CanopyColors = new Color[]
         {
-            new Color(0.30f, 0.22f, 0.12f),
-            new Color(0.35f, 0.25f, 0.14f),
-            new Color(0.28f, 0.20f, 0.10f),
+            new Color(0.08f, 0.28f, 0.06f),
+            new Color(0.10f, 0.32f, 0.08f),
+            new Color(0.06f, 0.25f, 0.05f),
+            new Color(0.12f, 0.30f, 0.07f),
         };
 
-        // Lush tropical greens
-        private static readonly Color[] LeafColors = new Color[]
-        {
-            new Color(0.10f, 0.32f, 0.08f),
-            new Color(0.14f, 0.38f, 0.10f),
-            new Color(0.18f, 0.42f, 0.12f),
-            new Color(0.12f, 0.36f, 0.06f),
-            new Color(0.08f, 0.30f, 0.05f),
-            new Color(0.16f, 0.40f, 0.14f),
-        };
+        private static readonly Color TrunkColor = new Color(0.25f, 0.20f, 0.12f);
 
         /// <summary>
-        /// Build a single tree at the given position. Default size is large (tropical).
+        /// Build a single tree — solid sphere canopy on a grounded trunk.
+        /// Trunk connects firmly to ground with a base disc.
         /// </summary>
-        public static GameObject Build(Vector3 position, Material treeMat, float scale = 1f)
+        public static GameObject Build(Vector3 position, Shader shader, float scale = 1f)
         {
             GameObject tree = new GameObject("Tree");
             tree.transform.position = position;
 
-            float trunkRadius = 0.2f * scale;
-            float trunkHeight = Random.Range(3.0f, 5.5f) * scale;
-            int trunkSegments = 6;
+            float trunkRadius = 0.15f * scale;
+            float trunkHeight = Random.Range(1.5f, 3.5f) * scale;
+            float canopyRadius = Random.Range(2.0f, 4.0f) * scale;
 
-            // Large tropical canopy
-            float canopyRadius = Random.Range(3.0f, 5.0f) * scale;
-            float canopyHeight = Random.Range(3.0f, 5.0f) * scale;
-            int canopyRings = 6;
-            int canopySegments = 8;
+            Color canopyColor = CanopyColors[Random.Range(0, CanopyColors.Length)];
 
-            Color trunkColor = TrunkColors[Random.Range(0, TrunkColors.Length)];
-            Color leafColor = LeafColors[Random.Range(0, LeafColors.Length)];
+            Material trunkMat = new Material(shader);
+            trunkMat.color = TrunkColor;
 
-            // ── Trunk ──
-            GameObject trunk = CreateCylinder("Trunk", trunkRadius, trunkHeight, trunkSegments, trunkColor, treeMat);
+            Material canopyMat = new Material(shader);
+            canopyMat.color = canopyColor;
+
+            // ── Trunk (tapered cylinder with base disc) ──
+            GameObject trunk = CreateGroundedCylinder("Trunk", trunkRadius, trunkHeight, 8, trunkMat);
             trunk.transform.SetParent(tree.transform, false);
 
-            // ── Canopy ──
-            GameObject canopy = CreateEllipsoid("Canopy", canopyRadius, canopyHeight, canopyRings, canopySegments, leafColor, treeMat);
+            // ── Canopy (smooth solid sphere) ──
+            GameObject canopy = CreateSphere("Canopy", canopyRadius, 12, 10, canopyMat);
             canopy.transform.SetParent(tree.transform, false);
-            canopy.transform.localPosition = new Vector3(
-                Random.Range(-0.4f, 0.4f) * scale,
-                trunkHeight + canopyHeight * 0.2f,
-                Random.Range(-0.4f, 0.4f) * scale);
-
-            // Some trees get a second canopy layer for fullness
-            if (Random.value > 0.4f)
-            {
-                Color leaf2 = LeafColors[Random.Range(0, LeafColors.Length)];
-                float r2 = canopyRadius * Random.Range(0.6f, 0.85f);
-                float h2 = canopyHeight * Random.Range(0.5f, 0.7f);
-                GameObject canopy2 = CreateEllipsoid("Canopy2", r2, h2, 5, 7, leaf2, treeMat);
-                canopy2.transform.SetParent(tree.transform, false);
-                canopy2.transform.localPosition = new Vector3(
-                    Random.Range(-1f, 1f) * scale,
-                    trunkHeight + canopyHeight * Random.Range(0.1f, 0.4f),
-                    Random.Range(-1f, 1f) * scale);
-            }
+            canopy.transform.localPosition = new Vector3(0f, trunkHeight + canopyRadius * 0.55f, 0f);
 
             return tree;
         }
@@ -79,7 +56,7 @@ namespace GeoCity3D.Geometry
         /// <summary>
         /// Scatter trees in a circular area.
         /// </summary>
-        public static List<GameObject> ScatterTrees(Vector3 center, float radius, int count, Material treeMat)
+        public static List<GameObject> ScatterTrees(Vector3 center, float radius, int count, Shader shader)
         {
             List<GameObject> trees = new List<GameObject>();
             for (int i = 0; i < count; i++)
@@ -87,15 +64,16 @@ namespace GeoCity3D.Geometry
                 float angle = Random.Range(0f, Mathf.PI * 2f);
                 float dist = Mathf.Sqrt(Random.value) * radius;
                 Vector3 pos = center + new Vector3(Mathf.Cos(angle) * dist, 0, Mathf.Sin(angle) * dist);
-                float scale = Random.Range(0.7f, 1.5f);
+                float treeScale = Random.Range(0.6f, 1.3f);
 
-                GameObject tree = Build(pos, treeMat, scale);
-                trees.Add(tree);
+                trees.Add(Build(pos, shader, treeScale));
             }
             return trees;
         }
 
-        private static GameObject CreateCylinder(string name, float radius, float height, int segments, Color color, Material mat)
+        // ── Grounded cylinder with closed base disc ──
+        private static GameObject CreateGroundedCylinder(string name, float radius, float height,
+            int segments, Material mat)
         {
             GameObject go = new GameObject(name);
             MeshFilter mf = go.AddComponent<MeshFilter>();
@@ -105,28 +83,21 @@ namespace GeoCity3D.Geometry
 
             Mesh mesh = new Mesh();
             List<Vector3> verts = new List<Vector3>();
-            List<Color> colors = new List<Color>();
             List<int> tris = new List<int>();
 
+            float topRadius = radius * 0.65f; // Slight taper
+
+            // Side vertices
             for (int i = 0; i <= segments; i++)
             {
                 float angle = (float)i / segments * Mathf.PI * 2f;
-                float x = Mathf.Cos(angle) * radius;
-                float z = Mathf.Sin(angle) * radius;
-
-                float topRadius = radius * 0.65f;
-                float xt = Mathf.Cos(angle) * topRadius;
-                float zt = Mathf.Sin(angle) * topRadius;
-
-                verts.Add(new Vector3(x, 0, z));
-                Color c = color + new Color((Random.value - 0.5f) * 0.04f, (Random.value - 0.5f) * 0.02f, 0);
-                c.a = 1f;
-                colors.Add(c);
-
-                verts.Add(new Vector3(xt, height, zt));
-                colors.Add(c * 0.9f);
+                float cos = Mathf.Cos(angle);
+                float sin = Mathf.Sin(angle);
+                verts.Add(new Vector3(cos * radius, 0, sin * radius));
+                verts.Add(new Vector3(cos * topRadius, height, sin * topRadius));
             }
 
+            // Side triangles
             for (int i = 0; i < segments; i++)
             {
                 int b = i * 2;
@@ -134,17 +105,53 @@ namespace GeoCity3D.Geometry
                 tris.Add(b + 1); tris.Add(b + 3); tris.Add(b + 2);
             }
 
+            // ── Base disc (ground contact) ──
+            int centerIdx = verts.Count;
+            verts.Add(new Vector3(0, 0, 0)); // Center of base
+
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = (float)i / segments * Mathf.PI * 2f;
+                verts.Add(new Vector3(Mathf.Cos(angle) * radius, 0, Mathf.Sin(angle) * radius));
+            }
+
+            for (int i = 0; i < segments; i++)
+            {
+                int next = (i + 1) % segments;
+                // Winding: center, next, current (face downward)
+                tris.Add(centerIdx);
+                tris.Add(centerIdx + 1 + next);
+                tris.Add(centerIdx + 1 + i);
+            }
+
+            // ── Top disc ──
+            int topCenterIdx = verts.Count;
+            verts.Add(new Vector3(0, height, 0));
+
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = (float)i / segments * Mathf.PI * 2f;
+                verts.Add(new Vector3(Mathf.Cos(angle) * topRadius, height, Mathf.Sin(angle) * topRadius));
+            }
+
+            for (int i = 0; i < segments; i++)
+            {
+                int next = (i + 1) % segments;
+                tris.Add(topCenterIdx);
+                tris.Add(topCenterIdx + 1 + i);
+                tris.Add(topCenterIdx + 1 + next);
+            }
+
             mesh.vertices = verts.ToArray();
-            mesh.colors = colors.ToArray();
             mesh.triangles = tris.ToArray();
             mesh.RecalculateNormals();
-            mf.mesh = mesh;
-
+            mesh.RecalculateBounds();
+            mf.sharedMesh = mesh;
             return go;
         }
 
-        private static GameObject CreateEllipsoid(string name, float radiusXZ, float radiusY,
-            int rings, int segments, Color color, Material mat)
+        // ── Smooth solid sphere ──
+        private static GameObject CreateSphere(string name, float radius, int rings, int segments, Material mat)
         {
             GameObject go = new GameObject(name);
             MeshFilter mf = go.AddComponent<MeshFilter>();
@@ -154,36 +161,20 @@ namespace GeoCity3D.Geometry
 
             Mesh mesh = new Mesh();
             List<Vector3> verts = new List<Vector3>();
-            List<Color> colors = new List<Color>();
             List<int> tris = new List<int>();
 
             for (int ring = 0; ring <= rings; ring++)
             {
                 float phi = Mathf.PI * ring / rings;
-                float y = Mathf.Cos(phi) * radiusY;
-                float ringRadius = Mathf.Sin(phi) * radiusXZ;
+                float y = Mathf.Cos(phi) * radius;
+                float ringRadius = Mathf.Sin(phi) * radius;
 
                 for (int seg = 0; seg <= segments; seg++)
                 {
                     float theta = Mathf.PI * 2f * seg / segments;
-
-                    // Organic wobble
-                    float vWobble = 1f + Mathf.PerlinNoise(ring * 2f + seg * 1.3f + 30f, ring * 0.7f) * 0.25f - 0.125f;
-                    float r = ringRadius * vWobble;
-
-                    float x = Mathf.Cos(theta) * r;
-                    float z = Mathf.Sin(theta) * r;
-
+                    float x = Mathf.Cos(theta) * ringRadius;
+                    float z = Mathf.Sin(theta) * ringRadius;
                     verts.Add(new Vector3(x, y, z));
-
-                    // Deep color variation for realistic foliage
-                    float shade = Mathf.PerlinNoise(seg * 1.1f + ring * 0.8f + 50f, ring * 1.5f + 70f);
-                    Color c = Color.Lerp(color * 0.6f, color * 1.3f, shade);
-                    // Darker underside
-                    float ao = Mathf.Clamp01((y / radiusY + 1f) * 0.5f);
-                    c *= Mathf.Lerp(0.5f, 1f, ao);
-                    c.a = 1f;
-                    colors.Add(c);
                 }
             }
 
@@ -194,18 +185,16 @@ namespace GeoCity3D.Geometry
                 {
                     int current = ring * vertsPerRing + seg;
                     int next = current + vertsPerRing;
-
                     tris.Add(current); tris.Add(next); tris.Add(current + 1);
                     tris.Add(current + 1); tris.Add(next); tris.Add(next + 1);
                 }
             }
 
             mesh.vertices = verts.ToArray();
-            mesh.colors = colors.ToArray();
             mesh.triangles = tris.ToArray();
             mesh.RecalculateNormals();
-            mf.mesh = mesh;
-
+            mesh.RecalculateBounds();
+            mf.sharedMesh = mesh;
             return go;
         }
     }

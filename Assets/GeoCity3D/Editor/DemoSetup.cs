@@ -26,44 +26,44 @@ namespace GeoCity3D.Editor
             if (shader == null) shader = Shader.Find("Standard");
             if (shader == null) shader = Shader.Find("Diffuse");
 
-            // Force-recreate all materials
-            controller.BuildingWallMaterial = ForceCreateMaterial(matPath, "BuildingWallMat", shader,
-                TextureGenerator.CreateFacadeTexture(), "ProceduralFacade");
-            controller.BuildingRoofMaterial = ForceCreateMaterial(matPath, "BuildingRoofMat", shader,
-                TextureGenerator.CreateRoofTexture(), "ProceduralRoof");
-            controller.RoadMaterial = ForceCreateMaterial(matPath, "RoadMat", shader,
-                TextureGenerator.CreateRoadTexture(), "ProceduralRoad");
-            controller.SidewalkMaterial = ForceCreateMaterial(matPath, "SidewalkMat", shader,
-                TextureGenerator.CreateSidewalkTexture(), "ProceduralSidewalk");
-            controller.GroundMaterial = ForceCreateMaterial(matPath, "GroundMat", shader,
-                TextureGenerator.CreateGroundTexture(), "ProceduralGround");
-            controller.ParkMaterial = ForceCreateMaterial(matPath, "ParkMat", shader,
-                TextureGenerator.CreateParkTexture(), "ProceduralPark");
-            controller.WaterMaterial = ForceCreateMaterial(matPath, "WaterMat", shader,
-                TextureGenerator.CreateWaterTexture(), "ProceduralWater");
+            // Clean architectural maquette palette
+            controller.BuildingWallMaterial = CreateSolidMaterial(matPath, "BuildingWallMat", shader,
+                new Color(0.82f, 0.82f, 0.82f), 0.15f);
+            controller.BuildingRoofMaterial = CreateSolidMaterial(matPath, "BuildingRoofMat", shader,
+                new Color(0.72f, 0.72f, 0.72f), 0.1f);
+            controller.RoadMaterial = CreateSolidMaterial(matPath, "RoadMat", shader,
+                new Color(0.22f, 0.22f, 0.24f), 0.05f);
+            controller.SidewalkMaterial = CreateSolidMaterial(matPath, "SidewalkMat", shader,
+                new Color(0.60f, 0.60f, 0.60f), 0.1f);
+            controller.GroundMaterial = CreateSolidMaterial(matPath, "GroundMat", shader,
+                new Color(0.35f, 0.35f, 0.37f), 0.1f);
+            controller.ParkMaterial = CreateSolidMaterial(matPath, "ParkMat", shader,
+                new Color(0.18f, 0.55f, 0.12f), 0.05f);
+            controller.WaterMaterial = CreateSolidMaterial(matPath, "WaterMat", shader,
+                new Color(0.15f, 0.30f, 0.38f), 0.6f);
 
             EditorUtility.SetDirty(controller);
             Selection.activeGameObject = controller.gameObject;
             
-            Debug.Log("Demo Scene Setup Complete! 7 materials generated. Open 'GeoCity3D > City Generator' to build a city.");
+            Debug.Log("Demo Scene Setup Complete! Architectural maquette style. Open 'GeoCity3D > City Generator' to build a city.");
         }
 
-        private static Material ForceCreateMaterial(string folder, string matName, Shader shader, Texture2D texture, string texName)
+        private static Material CreateSolidMaterial(string folder, string matName, Shader shader,
+            Color color, float smoothness)
         {
             string matAssetPath = $"{folder}/{matName}.mat";
-            string texAssetPath = $"{folder}/{texName}.asset";
 
-            if (AssetDatabase.LoadAssetAtPath<Texture2D>(texAssetPath) != null)
-                AssetDatabase.DeleteAsset(texAssetPath);
             if (AssetDatabase.LoadAssetAtPath<Material>(matAssetPath) != null)
                 AssetDatabase.DeleteAsset(matAssetPath);
 
-            AssetDatabase.CreateAsset(texture, texAssetPath);
-
             Material mat = new Material(shader);
-            mat.mainTexture = texture;
-            AssetDatabase.CreateAsset(mat, matAssetPath);
+            mat.color = color;
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", smoothness);
+            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", smoothness);
+            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f); // Double-sided
+            mat.renderQueue = 2000;
 
+            AssetDatabase.CreateAsset(mat, matAssetPath);
             return mat;
         }
     }
