@@ -248,37 +248,240 @@ namespace GeoCity3D.Visuals
         }
 
         // ═══════════════════════════════════════════════
-        // ROAD TEXTURE — dark Indian asphalt
+        //  SHARED ASPHALT HELPERS
         // ═══════════════════════════════════════════════
 
-        public static Texture2D CreateRoadTexture(int width = 256, int height = 512)
+        private static Color AsphaltPixel(Color baseAsphalt, int x, int y, float seed = 0f)
+        {
+            // Multi-octave Perlin for realistic aggregate texture
+            float p1 = Mathf.PerlinNoise(x * 0.15f + seed, y * 0.15f + seed) * 0.035f - 0.0175f;
+            float p2 = Mathf.PerlinNoise(x * 0.4f + seed + 100f, y * 0.4f + seed + 100f) * 0.018f;
+            float p3 = Mathf.PerlinNoise(x * 1.2f + seed + 200f, y * 1.2f + seed + 200f) * 0.008f;
+            float grain = (Random.value - 0.5f) * 0.03f;
+            float total = grain + p1 + p2 + p3;
+            Color c = baseAsphalt + new Color(total, total, total);
+
+            // Subtle crack overlay
+            float crack = Mathf.PerlinNoise(x * 0.8f + seed + 400f, y * 0.8f + seed + 400f);
+            if (crack > 0.78f)
+            {
+                float crackStr = (crack - 0.78f) / 0.22f * 0.12f;
+                c -= new Color(crackStr, crackStr, crackStr);
+            }
+
+            // Tire wear patches (slightly lighter)
+            float wear = Mathf.PerlinNoise(x * 0.03f + seed + 300f, y * 0.02f + seed + 300f);
+            if (wear > 0.6f)
+            {
+                float wearStr = (wear - 0.6f) / 0.4f * 0.04f;
+                c += new Color(wearStr, wearStr, wearStr);
+            }
+
+            c.a = 1f;
+            return c;
+        }
+
+        private static void DrawEdgeDarkening(Color[] pixels, int width, int height, float edgePct = 0.05f)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    float nx = (float)x / width;
+                    if (nx < edgePct)
+                        pixels[y * width + x] *= Mathf.Lerp(0.78f, 1f, nx / edgePct);
+                    else if (nx > 1f - edgePct)
+                        pixels[y * width + x] *= Mathf.Lerp(0.78f, 1f, (1f - nx) / edgePct);
+                    pixels[y * width + x].a = 1f;
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════
+        //  MOTORWAY — dark asphalt, 3-lane, yellow median, white lane dividers
+        // ═══════════════════════════════════════════════
+
+        public static Texture2D CreateMotorwayTexture(int width = 512, int height = 512)
         {
             Texture2D tex = new Texture2D(width, height);
             Color[] pixels = new Color[width * height];
-            Color asphalt = new Color(0.14f, 0.14f, 0.15f); // Darker asphalt
-            Color lineWhite = new Color(0.85f, 0.85f, 0.80f);
+            Color asphalt = new Color(0.12f, 0.12f, 0.13f); // Very dark
+            Color lineWhite = new Color(0.88f, 0.88f, 0.82f);
+            Color lineYellow = new Color(0.85f, 0.72f, 0.15f);
 
             for (int y = 0; y < height; y++)
             {
                 for (int x = 0; x < width; x++)
                 {
                     float nx = (float)x / width;
+                    Color c = AsphaltPixel(asphalt, x, y, 50f);
 
-                    // Asphalt with noise
-                    float grain = (Random.value - 0.5f) * 0.05f;
-                    float p1 = Mathf.PerlinNoise(x * 0.2f, y * 0.2f) * 0.03f - 0.015f;
-                    float p2 = Mathf.PerlinNoise(x * 0.5f + 100f, y * 0.5f + 100f) * 0.015f;
-                    Color c = asphalt + new Color(grain + p1 + p2, grain + p1 + p2, grain + p1 + p2);
+                    // Left edge solid white line
+                    if (nx > 0.04f && nx < 0.06f)
+                        c = Color.Lerp(c, lineWhite, 0.85f);
 
-                    // Edge darkening (gutters)
-                    if (nx < 0.06f)
-                        c *= Mathf.Lerp(0.75f, 1f, nx / 0.06f);
-                    else if (nx > 0.94f)
-                        c *= Mathf.Lerp(0.75f, 1f, (1f - nx) / 0.06f);
+                    // Right edge solid white line
+                    if (nx > 0.94f && nx < 0.96f)
+                        c = Color.Lerp(c, lineWhite, 0.85f);
 
-                    // Faint center line
-                    if (nx > 0.48f && nx < 0.52f && (y / 30) % 4 < 2)
-                        c = Color.Lerp(c, lineWhite, 0.4f);
+                    // Yellow center median (double line)
+                    if ((nx > 0.48f && nx < 0.49f) || (nx > 0.51f && nx < 0.52f))
+                        c = Color.Lerp(c, lineYellow, 0.9f);
+
+                    // Dashed lane dividers (at 1/3 and 2/3)
+                    bool isDash = (y % 64) < 40; // 40px dash, 24px gap
+                    if (isDash)
+                    {
+                        if (nx > 0.32f && nx < 0.34f)
+                            c = Color.Lerp(c, lineWhite, 0.75f);
+                        if (nx > 0.66f && nx < 0.68f)
+                            c = Color.Lerp(c, lineWhite, 0.75f);
+                    }
+
+                    pixels[y * width + x] = c;
+                }
+            }
+
+            DrawEdgeDarkening(pixels, width, height);
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
+
+        // ═══════════════════════════════════════════════
+        //  PRIMARY ROAD — 2-lane, dashed center line, solid edge lines
+        // ═══════════════════════════════════════════════
+
+        public static Texture2D CreatePrimaryRoadTexture(int width = 256, int height = 512)
+        {
+            Texture2D tex = new Texture2D(width, height);
+            Color[] pixels = new Color[width * height];
+            Color asphalt = new Color(0.14f, 0.14f, 0.15f);
+            Color lineWhite = new Color(0.88f, 0.88f, 0.82f);
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    float nx = (float)x / width;
+                    Color c = AsphaltPixel(asphalt, x, y, 150f);
+
+                    // Solid edge lines
+                    if (nx > 0.05f && nx < 0.07f)
+                        c = Color.Lerp(c, lineWhite, 0.80f);
+                    if (nx > 0.93f && nx < 0.95f)
+                        c = Color.Lerp(c, lineWhite, 0.80f);
+
+                    // Dashed center line
+                    bool isDash = (y % 48) < 30;
+                    if (isDash && nx > 0.49f && nx < 0.51f)
+                        c = Color.Lerp(c, lineWhite, 0.80f);
+
+                    pixels[y * width + x] = c;
+                }
+            }
+
+            DrawEdgeDarkening(pixels, width, height);
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
+
+        // ═══════════════════════════════════════════════
+        //  RESIDENTIAL — worn asphalt, faint center line
+        // ═══════════════════════════════════════════════
+
+        public static Texture2D CreateResidentialRoadTexture(int width = 256, int height = 512)
+        {
+            Texture2D tex = new Texture2D(width, height);
+            Color[] pixels = new Color[width * height];
+            Color asphalt = new Color(0.18f, 0.17f, 0.16f); // Lighter, more worn
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    float nx = (float)x / width;
+                    Color c = AsphaltPixel(asphalt, x, y, 250f);
+
+                    // Very faint, intermittent center line (worn away)
+                    bool isDash = (y % 60) < 25;
+                    float fadeRandom = Mathf.PerlinNoise(0f, y * 0.01f + 500f);
+                    if (isDash && nx > 0.48f && nx < 0.52f && fadeRandom > 0.3f)
+                    {
+                        float fade = fadeRandom * 0.35f;
+                        c = Color.Lerp(c, new Color(0.75f, 0.75f, 0.70f), fade);
+                    }
+
+                    pixels[y * width + x] = c;
+                }
+            }
+
+            DrawEdgeDarkening(pixels, width, height, 0.04f);
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
+
+        // ═══════════════════════════════════════════════
+        //  FOOTPATH — interlocking brick paver pattern
+        // ═══════════════════════════════════════════════
+
+        public static Texture2D CreateFootpathTexture(int width = 256, int height = 256)
+        {
+            Texture2D tex = new Texture2D(width, height);
+            Color[] pixels = new Color[width * height];
+
+            Color brick1 = new Color(0.62f, 0.48f, 0.38f); // Reddish brown
+            Color brick2 = new Color(0.58f, 0.52f, 0.42f); // Tan
+            Color brick3 = new Color(0.55f, 0.45f, 0.35f); // Dark brick
+            Color mortar = new Color(0.50f, 0.48f, 0.44f);  // Joint/mortar
+
+            int brickW = 24; // Brick width
+            int brickH = 12; // Brick height
+            int mortarSize = 2;
+
+            Color[] brickColors = { brick1, brick2, brick3 };
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    // Herringbone offset: alternate rows shifted by half
+                    int row = y / brickH;
+                    int offsetX = (row % 2 == 0) ? 0 : brickW / 2;
+                    int localX = (x + offsetX) % brickW;
+                    int localY = y % brickH;
+
+                    Color c;
+
+                    // Mortar joints
+                    if (localX < mortarSize || localY < mortarSize)
+                    {
+                        c = mortar;
+                        float mortarNoise = (Random.value - 0.5f) * 0.02f;
+                        c += new Color(mortarNoise, mortarNoise, mortarNoise);
+                    }
+                    else
+                    {
+                        // Pick a consistent brick color based on position
+                        int brickIdx = ((x + offsetX) / brickW + row * 7) % brickColors.Length;
+                        c = brickColors[brickIdx];
+
+                        // Brick surface variation
+                        float n = Mathf.PerlinNoise(x * 0.3f + 800f, y * 0.3f + 800f);
+                        c += new Color((n - 0.5f) * 0.04f, (n - 0.5f) * 0.03f, (n - 0.5f) * 0.02f);
+
+                        // Per-pixel grain
+                        float grain = (Random.value - 0.5f) * 0.015f;
+                        c += new Color(grain, grain, grain);
+                    }
 
                     c.a = 1f;
                     pixels[y * width + x] = c;
@@ -290,6 +493,55 @@ namespace GeoCity3D.Visuals
             tex.wrapMode = TextureWrapMode.Repeat;
             tex.filterMode = FilterMode.Bilinear;
             return tex;
+        }
+
+        // ═══════════════════════════════════════════════
+        //  CROSSWALK — zebra stripe pattern
+        // ═══════════════════════════════════════════════
+
+        public static Texture2D CreateCrosswalkTexture(int width = 256, int height = 128)
+        {
+            Texture2D tex = new Texture2D(width, height);
+            Color[] pixels = new Color[width * height];
+            Color asphalt = new Color(0.14f, 0.14f, 0.15f);
+            Color stripe = new Color(0.92f, 0.92f, 0.88f);
+
+            int stripeWidth = width / 8;
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    Color c = AsphaltPixel(asphalt, x, y, 350f);
+
+                    // Zebra stripes (perpendicular to road)
+                    int stripeIdx = x / stripeWidth;
+                    if (stripeIdx % 2 == 0)
+                    {
+                        // Worn stripe — not perfectly clean
+                        float wear = Mathf.PerlinNoise(x * 0.1f + 900f, y * 0.1f + 900f);
+                        float blendStr = 0.85f - wear * 0.15f;
+                        c = Color.Lerp(c, stripe, blendStr);
+                    }
+
+                    c.a = 1f;
+                    pixels[y * width + x] = c;
+                }
+            }
+
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
+
+        /// <summary>
+        /// Backward-compatible — creates a primary road texture.
+        /// </summary>
+        public static Texture2D CreateRoadTexture(int width = 256, int height = 512)
+        {
+            return CreatePrimaryRoadTexture(width, height);
         }
 
         // ═══════════════════════════════════════════════

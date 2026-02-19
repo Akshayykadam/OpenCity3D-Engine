@@ -67,6 +67,19 @@ namespace GeoCity3D.Editor
             return mat;
         }
 
+        // ── Textured material from a procedural texture ──
+        private Material CreateTexturedMaterial(Shader shader, Texture2D texture, float smoothness = 0.05f)
+        {
+            Material mat = new Material(shader);
+            mat.mainTexture = texture;
+            mat.color = Color.white;
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", smoothness);
+            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", smoothness);
+            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
+            mat.renderQueue = 2000;
+            return mat;
+        }
+
         private Shader FindBestShader()
         {
             Shader shader = Shader.Find("Universal Render Pipeline/Lit");
@@ -123,22 +136,37 @@ namespace GeoCity3D.Editor
             }
 
             // ═══════════════════════════════════════════════════════════
-            // 5. MATERIALS — Clean architectural model palette
-            //    Light gray buildings, dark roads, green parks, dark base
+            // 5. MATERIALS — Textured road-type materials + solid colors
             // ═══════════════════════════════════════════════════════════
 
             // Buildings — clean light gray with slight warmth
             Material buildingMat = CreateSolidMaterial(shader, new Color(0.82f, 0.82f, 0.82f), 0.15f);
             // Roofs — slightly darker gray
             Material roofMat = CreateSolidMaterial(shader, new Color(0.72f, 0.72f, 0.72f), 0.1f);
-            // Roads — dark charcoal
-            Material roadMat = CreateSolidMaterial(shader, new Color(0.22f, 0.22f, 0.24f), 0.05f);
+
+            // Roads — per-type textured materials
+            Material motorwayMat = CreateTexturedMaterial(shader, TextureGenerator.CreateMotorwayTexture(), 0.05f);
+            Material primaryRoadMat = CreateTexturedMaterial(shader, TextureGenerator.CreatePrimaryRoadTexture(), 0.05f);
+            Material residentialRoadMat = CreateTexturedMaterial(shader, TextureGenerator.CreateResidentialRoadTexture(), 0.05f);
+            Material footpathMat = CreateTexturedMaterial(shader, TextureGenerator.CreateFootpathTexture(), 0.05f);
+            Material crosswalkMat = CreateTexturedMaterial(shader, TextureGenerator.CreateCrosswalkTexture(), 0.05f);
+
+            Dictionary<string, Material> roadMaterials = new Dictionary<string, Material>
+            {
+                { "motorway", motorwayMat },
+                { "primary", primaryRoadMat },
+                { "residential", residentialRoadMat },
+                { "footpath", footpathMat }
+            };
+
             // Sidewalks — medium gray
             Material sidewalkMat = CreateSolidMaterial(shader, new Color(0.60f, 0.60f, 0.60f), 0.1f);
             // Parks — vibrant green
             Material parkMat = CreateSolidMaterial(shader, new Color(0.18f, 0.55f, 0.12f), 0.05f);
             // Water — dark teal
             Material waterMat = CreateSolidMaterial(shader, new Color(0.15f, 0.30f, 0.38f), 0.6f);
+            // Beach/Sand — warm tan
+            Material beachMat = CreateSolidMaterial(shader, new Color(0.82f, 0.72f, 0.52f), 0.05f);
             // Ground/Base — dark gray
             Material groundMat = CreateSolidMaterial(shader, new Color(0.35f, 0.35f, 0.37f), 0.1f);
             // Platform sides — darker
@@ -152,14 +180,22 @@ namespace GeoCity3D.Editor
             buildingsParent.transform.SetParent(cityRoot.transform);
             GameObject roadsParent = new GameObject("Roads");
             roadsParent.transform.SetParent(cityRoot.transform);
+            GameObject intersectionsParent = new GameObject("Intersections");
+            intersectionsParent.transform.SetParent(cityRoot.transform);
             GameObject parksParent = new GameObject("Parks");
             parksParent.transform.SetParent(cityRoot.transform);
             GameObject waterParent = new GameObject("Water");
             waterParent.transform.SetParent(cityRoot.transform);
             GameObject treesParent = new GameObject("Trees");
             treesParent.transform.SetParent(cityRoot.transform);
+            GameObject beachesParent = new GameObject("Beaches");
+            beachesParent.transform.SetParent(cityRoot.transform);
 
-            int buildingCount = 0, roadCount = 0, parkCount = 0, waterCount = 0, treeCount = 0;
+            int buildingCount = 0, roadCount = 0, parkCount = 0, waterCount = 0, beachCount = 0, treeCount = 0;
+            int intersectionCount = 0;
+
+            // Clear intersection data from previous generation
+            RoadBuilder.ClearIntersectionData();
 
             List<Bounds> buildingBounds = new List<Bounds>();
             List<Vector3> parkCenters = new List<Vector3>();
@@ -185,7 +221,7 @@ namespace GeoCity3D.Editor
                 }
                 else if (way.HasTag("highway"))
                 {
-                    GameObject road = RoadBuilder.Build(way, data, roadMat, sidewalkMat, shifter);
+                    GameObject road = RoadBuilder.Build(way, data, roadMaterials, sidewalkMat, shifter);
                     if (road != null)
                     {
                         road.transform.SetParent(roadsParent.transform);
@@ -225,6 +261,15 @@ namespace GeoCity3D.Editor
                         }
                     }
                 }
+                else if (IsBeachArea(way))
+                {
+                    GameObject beach = AreaBuilder.Build(way, data, beachMat, shifter, 0.02f, "Beach");
+                    if (beach != null)
+                    {
+                        beach.transform.SetParent(beachesParent.transform);
+                        beachCount++;
+                    }
+                }
                 else if (IsWaterArea(way))
                 {
                     GameObject water = AreaBuilder.Build(way, data, waterMat, shifter, 0.01f, "Water");
@@ -248,7 +293,11 @@ namespace GeoCity3D.Editor
                 }
             }
 
-            // 7. Dense trees in parks (like the reference images)
+            // 7. Generate intersection fills where roads meet
+            intersectionCount = GenerateIntersections(intersectionsParent.transform,
+                residentialRoadMat);
+
+            // 8. Dense trees in parks (like the reference images)
             for (int i = 0; i < parkCenters.Count; i++)
             {
                 float parkRadius = Mathf.Max(parkSizes[i] * 0.85f, 8f);
@@ -308,7 +357,7 @@ namespace GeoCity3D.Editor
             GameObject ground = GroundBuilder.Build(_radius, groundMat, platformMat);
             ground.transform.SetParent(cityRoot.transform);
 
-            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Parks: {parkCount}, Water: {waterCount}, Trees: {treeCount}");
+            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}");
             _isGenerating = false;
         }
 
@@ -331,22 +380,47 @@ namespace GeoCity3D.Editor
             return landuse == areaType || leisure == areaType || natural == areaType;
         }
 
+        private bool IsBeachArea(OsmWay way)
+        {
+            string natural = (way.GetTag("natural") ?? "").ToLower();
+            return natural == "beach" || natural == "sand";
+        }
+
         private bool IsWaterArea(OsmWay way)
         {
             string natural = (way.GetTag("natural") ?? "").ToLower();
             string waterway = (way.GetTag("waterway") ?? "").ToLower();
             string water = (way.GetTag("water") ?? "").ToLower();
             string landuse = (way.GetTag("landuse") ?? "").ToLower();
+            string relType = (way.GetTag("type") ?? "").ToLower();
+
+            // type=waterway from relation assembly = water
+            if (relType == "waterway") return true;
+
             return natural == "water" || natural == "bay" || natural == "wetland"
+                || natural == "coastline"
                 || waterway == "riverbank" || waterway == "dock" || waterway == "boatyard"
-                || water.Length > 0 || landuse == "reservoir" || landuse == "basin";
+                || waterway == "river" || waterway == "canal"  // Area river/canal polygons
+                || water == "lake" || water == "river" || water == "reservoir"
+                || water == "pond" || water == "basin" || water == "lagoon"
+                || water == "oxbow" || water == "canal" || water == "reflecting_pool"
+                || landuse == "reservoir" || landuse == "basin";
         }
 
         private bool IsLinearWaterway(OsmWay way)
         {
             string waterway = (way.GetTag("waterway") ?? "").ToLower();
-            return waterway == "river" || waterway == "stream" || waterway == "canal"
-                || waterway == "drain" || waterway == "ditch";
+            if (waterway != "river" && waterway != "stream" && waterway != "canal"
+                && waterway != "drain" && waterway != "ditch")
+                return false;
+
+            // Only treat as linear if the way is NOT a closed polygon
+            // (closed waterway polygons are handled as areas by IsWaterArea)
+            var nodes = way.NodeIds;
+            if (nodes.Count >= 3 && nodes[0] == nodes[nodes.Count - 1])
+                return false; // Closed ring = area, not linear
+
+            return true;
         }
 
         private float DetermineRiverWidth(OsmWay way)
@@ -362,5 +436,111 @@ namespace GeoCity3D.Editor
                 default: return 8f;
             }
         }
+
+        // ═══════════════════════════════════════════════════════════
+        //  INTERSECTION FILL GENERATION
+        // ═══════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Clusters nearby road endpoints and generates flat disc fills
+        /// to cover the gaps where roads meet at junctions.
+        /// </summary>
+        private int GenerateIntersections(Transform parent, Material material)
+        {
+            var endpoints = RoadBuilder.GetRoadEndpoints();
+            var widths = RoadBuilder.GetRoadWidths();
+
+            if (endpoints.Count < 2) return 0;
+
+            float clusterRadius = 8f; // Merge endpoints within 8m
+            bool[] used = new bool[endpoints.Count];
+            int intersectionCount = 0;
+
+            for (int i = 0; i < endpoints.Count; i++)
+            {
+                if (used[i]) continue;
+
+                // Find cluster of nearby endpoints
+                List<int> cluster = new List<int> { i };
+                used[i] = true;
+
+                for (int j = i + 1; j < endpoints.Count; j++)
+                {
+                    if (used[j]) continue;
+                    if (Vector3.Distance(endpoints[i], endpoints[j]) < clusterRadius)
+                    {
+                        cluster.Add(j);
+                        used[j] = true;
+                    }
+                }
+
+                // Only generate intersection if 3+ road ends meet (T or cross junction)
+                if (cluster.Count < 3) continue;
+
+                // Compute center and max width
+                Vector3 center = Vector3.zero;
+                float maxWidth = 0f;
+                foreach (int idx in cluster)
+                {
+                    center += endpoints[idx];
+                    if (idx < widths.Count)
+                        maxWidth = Mathf.Max(maxWidth, widths[idx]);
+                }
+                center /= cluster.Count;
+                center.y = 0.09f; // Just above road surface
+
+                float discRadius = Mathf.Max(maxWidth * 0.7f, 4f);
+
+                GameObject disc = CreateIntersectionDisc(center, discRadius, material,
+                    $"Intersection_{intersectionCount}");
+                disc.transform.SetParent(parent);
+                intersectionCount++;
+            }
+
+            return intersectionCount;
+        }
+
+        private GameObject CreateIntersectionDisc(Vector3 center, float radius, Material material, string name)
+        {
+            GameObject go = new GameObject(name);
+            MeshFilter mf = go.AddComponent<MeshFilter>();
+            MeshRenderer mr = go.AddComponent<MeshRenderer>();
+            mr.material = material;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = true;
+
+            int segments = 16;
+            Mesh mesh = new Mesh();
+            Vector3[] verts = new Vector3[segments + 1];
+            Vector2[] uvs = new Vector2[segments + 1];
+            int[] tris = new int[segments * 3];
+
+            verts[0] = center;
+            uvs[0] = new Vector2(0.5f, 0.5f);
+
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = (float)i / segments * Mathf.PI * 2f;
+                verts[i + 1] = center + new Vector3(Mathf.Cos(angle), 0, Mathf.Sin(angle)) * radius;
+                uvs[i + 1] = new Vector2(
+                    0.5f + Mathf.Cos(angle) * 0.5f,
+                    0.5f + Mathf.Sin(angle) * 0.5f);
+
+                int next = (i + 1) % segments + 1;
+                tris[i * 3] = 0;
+                tris[i * 3 + 1] = i + 1;
+                tris[i * 3 + 2] = next;
+            }
+
+            mesh.vertices = verts;
+            mesh.uv = uvs;
+            mesh.triangles = tris;
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+
+            mf.sharedMesh = mesh;
+            return go;
+        }
     }
 }
+

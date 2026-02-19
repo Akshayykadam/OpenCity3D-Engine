@@ -49,22 +49,38 @@ namespace GeoCity3D.Network
         }
 
         /// <summary>
-        /// Targeted query — only fetches buildings, roads, parks, and water (not everything).
+        /// Targeted query — fetches buildings, roads, parks, water areas, waterways, and water relations.
         /// </summary>
         private string BuildQuery(double lat, double lon, double radius)
         {
-            // Only request the feature types we actually use for city generation
             return $"[out:xml][timeout:55];" +
                    $"(" +
+                   // Buildings & roads
                    $"way[\"building\"](around:{radius},{lat},{lon});" +
                    $"way[\"highway\"](around:{radius},{lat},{lon});" +
+                   // Parks & green areas
                    $"way[\"landuse\"~\"park|grass|forest|meadow|reservoir|basin\"](around:{radius},{lat},{lon});" +
                    $"way[\"leisure\"~\"park|garden\"](around:{radius},{lat},{lon});" +
-                   $"way[\"natural\"=\"water\"](around:{radius},{lat},{lon});" +
-                   $"way[\"waterway\"~\"riverbank|dock\"](around:{radius},{lat},{lon});" +
+                   // Water areas (closed polygons)
+                   $"way[\"natural\"~\"water|bay|wetland|coastline|beach\"](around:{radius},{lat},{lon});" +
+                   $"way[\"waterway\"~\"riverbank|dock|boatyard\"](around:{radius},{lat},{lon});" +
+                   $"way[\"water\"](around:{radius},{lat},{lon});" +
+                   $"way[\"landuse\"~\"reservoir|basin\"](around:{radius},{lat},{lon});" +
+                   // Linear waterways (rivers, streams, canals)
+                   $"way[\"waterway\"~\"river|stream|canal|drain|ditch\"](around:{radius},{lat},{lon});" +
+                   // Beach/sand areas
+                   $"way[\"natural\"~\"beach|sand\"](around:{radius},{lat},{lon});" +
+                   // Water relations (multipolygon lakes, seas, wide rivers)
+                   $"relation[\"natural\"=\"water\"](around:{radius},{lat},{lon});" +
+                   $"relation[\"natural\"~\"bay|wetland\"](around:{radius},{lat},{lon});" +
+                   $"relation[\"waterway\"](around:{radius},{lat},{lon});" +
+                   $"relation[\"water\"](around:{radius},{lat},{lon});" +
+                   $"relation[\"landuse\"~\"reservoir|basin\"](around:{radius},{lat},{lon});" +
+                   $"relation[\"type\"=\"waterway\"](around:{radius},{lat},{lon});" +
                    $");" +
                    $"out body;>;out skel qt;";
         }
+
 
         /// <summary>
         /// Fallback: even more focused query (buildings + roads only) if the full query times out.

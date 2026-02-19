@@ -26,11 +26,25 @@ namespace GeoCity3D.Editor
             if (shader == null) shader = Shader.Find("Standard");
             if (shader == null) shader = Shader.Find("Diffuse");
 
-            // Clean architectural maquette palette
+            // Buildings
             controller.BuildingWallMaterial = CreateSolidMaterial(matPath, "BuildingWallMat", shader,
                 new Color(0.82f, 0.82f, 0.82f), 0.15f);
             controller.BuildingRoofMaterial = CreateSolidMaterial(matPath, "BuildingRoofMat", shader,
                 new Color(0.72f, 0.72f, 0.72f), 0.1f);
+
+            // Road type materials (textured)
+            controller.MotorwayMaterial = CreateTexturedMaterial(matPath, "MotorwayMat", shader,
+                TextureGenerator.CreateMotorwayTexture(), 0.05f);
+            controller.PrimaryRoadMaterial = CreateTexturedMaterial(matPath, "PrimaryRoadMat", shader,
+                TextureGenerator.CreatePrimaryRoadTexture(), 0.05f);
+            controller.ResidentialRoadMaterial = CreateTexturedMaterial(matPath, "ResidentialRoadMat", shader,
+                TextureGenerator.CreateResidentialRoadTexture(), 0.05f);
+            controller.FootpathMaterial = CreateTexturedMaterial(matPath, "FootpathMat", shader,
+                TextureGenerator.CreateFootpathTexture(), 0.05f);
+            controller.CrosswalkMaterial = CreateTexturedMaterial(matPath, "CrosswalkMat", shader,
+                TextureGenerator.CreateCrosswalkTexture(), 0.05f);
+
+            // General road fallback
             controller.RoadMaterial = CreateSolidMaterial(matPath, "RoadMat", shader,
                 new Color(0.22f, 0.22f, 0.24f), 0.05f);
             controller.SidewalkMaterial = CreateSolidMaterial(matPath, "SidewalkMat", shader,
@@ -45,7 +59,7 @@ namespace GeoCity3D.Editor
             EditorUtility.SetDirty(controller);
             Selection.activeGameObject = controller.gameObject;
             
-            Debug.Log("Demo Scene Setup Complete! Architectural maquette style. Open 'GeoCity3D > City Generator' to build a city.");
+            Debug.Log("Demo Scene Setup Complete! Roads use per-type textured materials. Open 'GeoCity3D > City Generator' to build a city.");
         }
 
         private static Material CreateSolidMaterial(string folder, string matName, Shader shader,
@@ -60,7 +74,33 @@ namespace GeoCity3D.Editor
             mat.color = color;
             if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", smoothness);
             if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", smoothness);
-            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f); // Double-sided
+            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
+            mat.renderQueue = 2000;
+
+            AssetDatabase.CreateAsset(mat, matAssetPath);
+            return mat;
+        }
+
+        private static Material CreateTexturedMaterial(string folder, string matName, Shader shader,
+            Texture2D texture, float smoothness)
+        {
+            string matAssetPath = $"{folder}/{matName}.mat";
+
+            if (AssetDatabase.LoadAssetAtPath<Material>(matAssetPath) != null)
+                AssetDatabase.DeleteAsset(matAssetPath);
+
+            // Save texture as an asset
+            string texPath = $"{folder}/{matName}_Tex.asset";
+            if (AssetDatabase.LoadAssetAtPath<Texture2D>(texPath) != null)
+                AssetDatabase.DeleteAsset(texPath);
+            AssetDatabase.CreateAsset(texture, texPath);
+
+            Material mat = new Material(shader);
+            mat.mainTexture = texture;
+            mat.color = Color.white;
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", smoothness);
+            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", smoothness);
+            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
             mat.renderQueue = 2000;
 
             AssetDatabase.CreateAsset(mat, matAssetPath);
@@ -68,3 +108,4 @@ namespace GeoCity3D.Editor
         }
     }
 }
+

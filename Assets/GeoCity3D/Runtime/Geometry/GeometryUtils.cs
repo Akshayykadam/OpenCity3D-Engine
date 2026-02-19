@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace GeoCity3D.Geometry
@@ -98,6 +99,64 @@ namespace GeoCity3D.Geometry
             return ((ax * pz - az * px) >= 0.0f) &&
                    ((bx * (P.z - B.z) - bz * (P.x - B.x)) >= 0.0f) &&
                    ((cx * pz - cz * px) >= 0.0f);
+        }
+
+        // ═══════════════════════════════════════════════
+        // CATMULL-ROM SPLINE — smooth road curves
+        // ═══════════════════════════════════════════════
+
+        /// <summary>
+        /// Smooth a polyline path using Catmull-Rom spline interpolation.
+        /// Each segment is subdivided into 'subdivisions' sub-segments.
+        /// </summary>
+        public static List<Vector3> SmoothPath(List<Vector3> points, int subdivisions = 4)
+        {
+            if (points == null || points.Count < 3) return points;
+
+            // Remove near-duplicate points that cause zero-length segments
+            List<Vector3> clean = new List<Vector3> { points[0] };
+            for (int i = 1; i < points.Count; i++)
+            {
+                if (Vector3.Distance(points[i], clean[clean.Count - 1]) > 0.5f)
+                    clean.Add(points[i]);
+            }
+            if (clean.Count < 3) return clean;
+
+            List<Vector3> result = new List<Vector3>();
+            int n = clean.Count;
+
+            for (int i = 0; i < n - 1; i++)
+            {
+                // Catmull-Rom needs 4 control points: p0, p1, p2, p3
+                // Clamp at endpoints
+                Vector3 p0 = clean[Mathf.Max(i - 1, 0)];
+                Vector3 p1 = clean[i];
+                Vector3 p2 = clean[Mathf.Min(i + 1, n - 1)];
+                Vector3 p3 = clean[Mathf.Min(i + 2, n - 1)];
+
+                for (int s = 0; s < subdivisions; s++)
+                {
+                    float t = (float)s / subdivisions;
+                    result.Add(CatmullRom(p0, p1, p2, p3, t));
+                }
+            }
+
+            // Add final point
+            result.Add(clean[n - 1]);
+            return result;
+        }
+
+        private static Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
+        {
+            float t2 = t * t;
+            float t3 = t2 * t;
+
+            return 0.5f * (
+                (2f * p1) +
+                (-p0 + p2) * t +
+                (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 +
+                (-p0 + 3f * p1 - 3f * p2 + p3) * t3
+            );
         }
     }
 }

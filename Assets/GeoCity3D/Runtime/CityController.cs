@@ -8,6 +8,13 @@ namespace GeoCity3D
         public Material BuildingWallMaterial;
         public Material BuildingRoofMaterial;
 
+        [Header("Road Materials")]
+        public Material MotorwayMaterial;
+        public Material PrimaryRoadMaterial;
+        public Material ResidentialRoadMaterial;
+        public Material FootpathMaterial;
+        public Material CrosswalkMaterial;
+
         [Header("Infrastructure Materials")]
         public Material RoadMaterial;
         public Material SidewalkMaterial;
@@ -21,3 +28,4 @@ namespace GeoCity3D
         public Material BuildingMaterial => BuildingWallMaterial;
     }
 }
+

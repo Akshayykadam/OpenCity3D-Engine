@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using GeoCity3D.Data;
 using GeoCity3D.Coordinates;
+using System.Linq;
 using UnityEngine;
 
 namespace GeoCity3D.Geometry
@@ -25,8 +26,60 @@ namespace GeoCity3D.Geometry
         private const float PILLAR_WIDTH = 0.8f;
         private const float PILLAR_SPACING = 20f;         // One pillar every 20m
 
+        // ── Road type categories for material selection ──
+        public static readonly string[] MotorwayTypes = { "motorway", "motorway_link", "trunk", "trunk_link" };
+        public static readonly string[] PrimaryTypes = { "primary", "primary_link", "secondary", "secondary_link" };
+        public static readonly string[] ResidentialTypes = { "tertiary", "tertiary_link", "residential", "unclassified", "living_street", "service" };
+        public static readonly string[] FootpathTypes = { "footway", "path", "pedestrian", "cycleway", "steps", "track" };
+
+        // ── Intersection endpoint registry ──
+        // Stores road endpoints for intersection detection
+        private static List<Vector3> _roadEndpoints = new List<Vector3>();
+        private static List<float> _roadWidths = new List<float>();
+
+        public static void ClearIntersectionData()
+        {
+            _roadEndpoints.Clear();
+            _roadWidths.Clear();
+        }
+
+        public static List<Vector3> GetRoadEndpoints() => _roadEndpoints;
+        public static List<float> GetRoadWidths() => _roadWidths;
+
+        /// <summary>
+        /// Classify a highway type into a road category for material selection.
+        /// Returns: "motorway", "primary", "residential", or "footpath".
+        /// </summary>
+        public static string ClassifyRoad(string highwayType)
+        {
+            string hw = (highwayType ?? "").ToLower();
+            if (MotorwayTypes.Contains(hw)) return "motorway";
+            if (PrimaryTypes.Contains(hw)) return "primary";
+            if (FootpathTypes.Contains(hw)) return "footpath";
+            return "residential"; // default
+        }
+
         public static GameObject Build(OsmWay way, OsmData data, Material roadMaterial,
             Material sidewalkMaterial, OriginShifter originShifter, float defaultWidth = 6.0f)
+        {
+            string highwayType = (way.GetTag("highway") ?? "").ToLower();
+            var matDict = new Dictionary<string, Material>
+            {
+                { "motorway", roadMaterial },
+                { "primary", roadMaterial },
+                { "residential", roadMaterial },
+                { "footpath", sidewalkMaterial ?? roadMaterial }
+            };
+            return Build(way, data, matDict, sidewalkMaterial, originShifter, defaultWidth);
+        }
+
+        /// <summary>
+        /// Full build with road-type material dictionary.
+        /// Keys: "motorway", "primary", "residential", "footpath".
+        /// </summary>
+        public static GameObject Build(OsmWay way, OsmData data,
+            Dictionary<string, Material> roadMaterials, Material sidewalkMaterial,
+            OriginShifter originShifter, float defaultWidth = 6.0f)
         {
             List<Vector3> path = new List<Vector3>();
 
@@ -43,24 +96,46 @@ namespace GeoCity3D.Geometry
 
             float width = DetermineWidth(way, defaultWidth);
             string highwayType = (way.GetTag("highway") ?? "").ToLower();
+            string roadClass = ClassifyRoad(highwayType);
+
+            // Select material based on road class
+            Material roadMat = roadMaterials.ContainsKey(roadClass)
+                ? roadMaterials[roadClass]
+                : roadMaterials.Values.FirstOrDefault();
 
             // ── Check if this is a bridge ──
             bool isBridge = way.HasTag("bridge") && (way.GetTag("bridge") ?? "").ToLower() != "no";
 
+            // ── Apply curve smoothing ──
+            // Higher subdivisions for major roads, lower for minor ones
+            if (!isBridge && path.Count >= 3)
+            {
+                int subdivisions = (roadClass == "motorway" || roadClass == "primary") ? 6 : 4;
+                path = GeometryUtils.SmoothPath(path, subdivisions);
+            }
+
+            // ── Track endpoints for intersection detection ──
+            if (path.Count >= 2)
+            {
+                _roadEndpoints.Add(path[0]);
+                _roadEndpoints.Add(path[path.Count - 1]);
+                _roadWidths.Add(width);
+                _roadWidths.Add(width);
+            }
+
             if (isBridge)
             {
-                return BuildBridge(path, width, roadMaterial, sidewalkMaterial, way.Id, highwayType);
+                return BuildBridge(path, width, roadMat, sidewalkMaterial, way.Id, highwayType);
             }
 
             // ── Normal road ──
             bool addSidewalks = sidewalkMaterial != null && width >= 4f
-                && highwayType != "footway" && highwayType != "path"
-                && highwayType != "cycleway" && highwayType != "steps";
+                && roadClass != "footpath";
 
             GameObject parent = new GameObject($"Road_{way.Id}");
 
             GameObject road = CreateSolidStrip(path, width, ROAD_Y_SURFACE, ROAD_THICKNESS,
-                roadMaterial, $"RoadSurface_{way.Id}");
+                roadMat, $"RoadSurface_{way.Id}");
             if (road != null) road.transform.SetParent(parent.transform);
 
             if (addSidewalks)
@@ -91,7 +166,7 @@ namespace GeoCity3D.Geometry
         }
 
         /// <summary>
-        /// Backward-compatible overload.
+        /// Backward-compatible overload (single material, no sidewalks).
         /// </summary>
         public static GameObject Build(OsmWay way, OsmData data, Material material,
             OriginShifter originShifter, float defaultWidth = 6.0f)

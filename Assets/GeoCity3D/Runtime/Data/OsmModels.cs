@@ -50,16 +50,62 @@ namespace GeoCity3D.Data
         }
     }
 
+    public struct OsmRelationMember
+    {
+        public string Type;  // "way", "node", "relation"
+        public long Ref;
+        public string Role;  // "outer", "inner", ""
+
+        public OsmRelationMember(string type, long refId, string role)
+        {
+            Type = type;
+            Ref = refId;
+            Role = role;
+        }
+    }
+
+    public class OsmRelation
+    {
+        public long Id;
+        public List<OsmRelationMember> Members;
+        public Dictionary<string, string> Tags;
+
+        public OsmRelation(long id)
+        {
+            Id = id;
+            Members = new List<OsmRelationMember>();
+            Tags = new Dictionary<string, string>();
+        }
+
+        public void AddMember(string type, long refId, string role)
+        {
+            Members.Add(new OsmRelationMember(type, refId, role));
+        }
+
+        public void AddTag(string key, string value)
+        {
+            Tags[key] = value;
+        }
+
+        public string GetTag(string key)
+        {
+            return Tags.ContainsKey(key) ? Tags[key] : null;
+        }
+    }
+
     public class OsmData
     {
         public Dictionary<long, OsmNode> Nodes;
         public List<OsmWay> Ways;
-        // In the future, we might add Relations
+        public Dictionary<long, OsmWay> WaysById;
+        public List<OsmRelation> Relations;
 
         public OsmData()
         {
             Nodes = new Dictionary<long, OsmNode>();
             Ways = new List<OsmWay>();
+            WaysById = new Dictionary<long, OsmWay>();
+            Relations = new List<OsmRelation>();
         }
 
         public void AddNode(OsmNode node)
@@ -70,6 +116,12 @@ namespace GeoCity3D.Data
         public void AddWay(OsmWay way)
         {
             Ways.Add(way);
+            WaysById[way.Id] = way;
+        }
+
+        public void AddRelation(OsmRelation relation)
+        {
+            Relations.Add(relation);
         }
     }
 }
