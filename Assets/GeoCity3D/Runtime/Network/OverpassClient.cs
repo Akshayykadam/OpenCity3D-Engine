@@ -16,12 +16,30 @@ namespace GeoCity3D.Network
 
             using (UnityWebRequest webRequest = UnityWebRequest.Get(url))
             {
-                webRequest.timeout = 30; // Set timeout to 30 seconds
+                webRequest.timeout = 60; // Increased timeout for larger areas
                 yield return webRequest.SendWebRequest();
 
                 if (webRequest.result == UnityWebRequest.Result.ConnectionError || webRequest.result == UnityWebRequest.Result.ProtocolError)
                 {
-                    onError?.Invoke(webRequest.error);
+                    // Retry once with a smaller, focused query
+                    Debug.Log("First attempt failed, retrying with focused query...");
+                    string retryQuery = BuildFocusedQuery(lat, lon, radius);
+                    string retryUrl = $"{OverpassApiUrl}?data={UnityWebRequest.EscapeURL(retryQuery)}";
+
+                    using (UnityWebRequest retry = UnityWebRequest.Get(retryUrl))
+                    {
+                        retry.timeout = 90;
+                        yield return retry.SendWebRequest();
+
+                        if (retry.result == UnityWebRequest.Result.ConnectionError || retry.result == UnityWebRequest.Result.ProtocolError)
+                        {
+                            onError?.Invoke(retry.error);
+                        }
+                        else
+                        {
+                            onSuccess?.Invoke(retry.downloadHandler.text);
+                        }
+                    }
                 }
                 else
                 {
@@ -30,14 +48,35 @@ namespace GeoCity3D.Network
             }
         }
 
+        /// <summary>
+        /// Targeted query — only fetches buildings, roads, parks, and water (not everything).
+        /// </summary>
         private string BuildQuery(double lat, double lon, double radius)
         {
-            // Convert radius to degrees approx (1 degree lat ~= 111km)
-            // But Overpass takes bounding box (south, west, north, east) or around(radius, lat, lon)
-            // Let's use around for simplicity: (around:radius, lat, lon)
-            
-            // Add timeout of 25 seconds to the query itself
-            return $"[out:xml][timeout:25];(node(around:{radius},{lat},{lon});way(around:{radius},{lat},{lon});relation(around:{radius},{lat},{lon}););out body;>;out skel qt;";
+            // Only request the feature types we actually use for city generation
+            return $"[out:xml][timeout:55];" +
+                   $"(" +
+                   $"way[\"building\"](around:{radius},{lat},{lon});" +
+                   $"way[\"highway\"](around:{radius},{lat},{lon});" +
+                   $"way[\"landuse\"~\"park|grass|forest|meadow|reservoir|basin\"](around:{radius},{lat},{lon});" +
+                   $"way[\"leisure\"~\"park|garden\"](around:{radius},{lat},{lon});" +
+                   $"way[\"natural\"=\"water\"](around:{radius},{lat},{lon});" +
+                   $"way[\"waterway\"~\"riverbank|dock\"](around:{radius},{lat},{lon});" +
+                   $");" +
+                   $"out body;>;out skel qt;";
+        }
+
+        /// <summary>
+        /// Fallback: even more focused query (buildings + roads only) if the full query times out.
+        /// </summary>
+        private string BuildFocusedQuery(double lat, double lon, double radius)
+        {
+            return $"[out:xml][timeout:90];" +
+                   $"(" +
+                   $"way[\"building\"](around:{radius},{lat},{lon});" +
+                   $"way[\"highway\"](around:{radius},{lat},{lon});" +
+                   $");" +
+                   $"out body;>;out skel qt;";
         }
     }
 }

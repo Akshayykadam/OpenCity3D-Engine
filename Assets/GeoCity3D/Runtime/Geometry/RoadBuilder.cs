@@ -7,7 +7,12 @@ namespace GeoCity3D.Geometry
 {
     public class RoadBuilder
     {
-        public static GameObject Build(OsmWay way, OsmData data, Material material, OriginShifter originShifter, float defaultWidth = 4.0f)
+        private const float ROAD_Y_OFFSET = 0.05f;
+        private const float SIDEWALK_Y_OFFSET = 0.12f;
+        private const float SIDEWALK_WIDTH = 1.5f;
+
+        public static GameObject Build(OsmWay way, OsmData data, Material roadMaterial,
+            Material sidewalkMaterial, OriginShifter originShifter, float defaultWidth = 6.0f)
         {
             List<Vector3> path = new List<Vector3>();
 
@@ -15,30 +20,104 @@ namespace GeoCity3D.Geometry
             {
                 if (data.Nodes.TryGetValue(nodeId, out OsmNode node))
                 {
-                    path.Add(originShifter.GetLocalPosition(node.Latitude, node.Longitude));
+                    Vector3 pos = originShifter.GetLocalPosition(node.Latitude, node.Longitude);
+                    path.Add(pos);
                 }
             }
 
             if (path.Count < 2) return null;
 
-            float width = defaultWidth;
-            if (way.Tags.ContainsKey("width"))
+            float width = DetermineWidth(way, defaultWidth);
+            string highwayType = (way.GetTag("highway") ?? "").ToLower();
+            bool addSidewalks = sidewalkMaterial != null && width >= 4f
+                && highwayType != "footway" && highwayType != "path"
+                && highwayType != "cycleway" && highwayType != "steps";
+
+            GameObject parent = new GameObject($"Road_{way.Id}");
+
+            // Road mesh
+            GameObject road = CreateStripMesh(path, width, ROAD_Y_OFFSET, roadMaterial, $"RoadSurface_{way.Id}");
+            if (road != null) road.transform.SetParent(parent.transform);
+
+            // Sidewalks
+            if (addSidewalks && sidewalkMaterial != null)
             {
-                 if (float.TryParse(way.Tags["width"].Replace("m", ""), out float parsedWidth))
+                float halfRoad = width / 2f;
+
+                // Build offset paths for left and right sidewalks
+                List<Vector3> leftPath = new List<Vector3>();
+                List<Vector3> rightPath = new List<Vector3>();
+
+                for (int i = 0; i < path.Count; i++)
                 {
-                    width = parsedWidth;
+                    Vector3 forward = Vector3.zero;
+                    if (i < path.Count - 1) forward += (path[i + 1] - path[i]).normalized;
+                    if (i > 0) forward += (path[i] - path[i - 1]).normalized;
+                    forward.y = 0;
+                    forward.Normalize();
+                    Vector3 right = Vector3.Cross(Vector3.up, forward).normalized;
+
+                    leftPath.Add(path[i] - right * (halfRoad + SIDEWALK_WIDTH / 2f));
+                    rightPath.Add(path[i] + right * (halfRoad + SIDEWALK_WIDTH / 2f));
                 }
+
+                GameObject leftSidewalk = CreateStripMesh(leftPath, SIDEWALK_WIDTH, SIDEWALK_Y_OFFSET, sidewalkMaterial, $"SidewalkL_{way.Id}");
+                GameObject rightSidewalk = CreateStripMesh(rightPath, SIDEWALK_WIDTH, SIDEWALK_Y_OFFSET, sidewalkMaterial, $"SidewalkR_{way.Id}");
+
+                if (leftSidewalk != null) leftSidewalk.transform.SetParent(parent.transform);
+                if (rightSidewalk != null) rightSidewalk.transform.SetParent(parent.transform);
             }
 
-            return CreateRoadMesh(path, width, material, way.Id);
+            return parent;
         }
 
-        private static GameObject CreateRoadMesh(List<Vector3> path, float width, Material material, long id)
+        /// <summary>
+        /// Backward-compatible overload without sidewalk material.
+        /// </summary>
+        public static GameObject Build(OsmWay way, OsmData data, Material material, OriginShifter originShifter, float defaultWidth = 6.0f)
         {
-            GameObject go = new GameObject($"Road_{id}");
+            return Build(way, data, material, null, originShifter, defaultWidth);
+        }
+
+        private static float DetermineWidth(OsmWay way, float defaultWidth)
+        {
+            if (way.Tags.ContainsKey("width"))
+            {
+                if (float.TryParse(way.Tags["width"].Replace("m", ""),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out float w))
+                    return w;
+            }
+
+            string type = (way.GetTag("highway") ?? "").ToLower();
+            switch (type)
+            {
+                case "motorway":
+                case "trunk": return 12f;
+                case "primary": return 10f;
+                case "secondary": return 8f;
+                case "tertiary":
+                case "residential": return 6f;
+                case "service": return 4f;
+                case "footway":
+                case "path":
+                case "cycleway": return 2f;
+                case "pedestrian": return 4f;
+                default: return defaultWidth;
+            }
+        }
+
+        private static GameObject CreateStripMesh(List<Vector3> path, float width, float yOffset, Material material, string name)
+        {
+            if (path.Count < 2) return null;
+
+            GameObject go = new GameObject(name);
             MeshFilter mf = go.AddComponent<MeshFilter>();
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
             mr.material = material;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = true;
 
             Mesh mesh = new Mesh();
             List<Vector3> vertices = new List<Vector3>();
@@ -46,35 +125,29 @@ namespace GeoCity3D.Geometry
             List<Vector2> uvs = new List<Vector2>();
 
             float halfWidth = width / 2.0f;
-
             float uvY = 0;
-            float scale = 0.2f; // Adjust road texture scale
+            float uvScale = 1f / width;
 
             for (int i = 0; i < path.Count; i++)
             {
                 Vector3 current = path[i];
-                Vector3 forward = Vector3.zero;
+                current.y = yOffset;
 
-                if (i < path.Count - 1)
-                {
-                    forward += (path[i + 1] - current).normalized;
-                }
-                if (i > 0)
-                {
-                    forward += (current - path[i - 1]).normalized;
-                }
+                Vector3 forward = Vector3.zero;
+                if (i < path.Count - 1) forward += (path[i + 1] - current).normalized;
+                if (i > 0) forward += (current - path[i - 1]).normalized;
+                forward.y = 0;
                 forward.Normalize();
-                
+
                 Vector3 right = Vector3.Cross(Vector3.up, forward).normalized;
 
-                vertices.Add(current - right * halfWidth); // Left
-                vertices.Add(current + right * halfWidth); // Right
+                vertices.Add(current - right * halfWidth);
+                vertices.Add(current + right * halfWidth);
 
-                // Calculate Distance for V coordinate
                 if (i > 0)
                 {
                     float dist = Vector3.Distance(path[i], path[i - 1]);
-                    uvY += dist * scale;
+                    uvY += dist * uvScale;
                 }
 
                 uvs.Add(new Vector2(0, uvY));
@@ -83,15 +156,9 @@ namespace GeoCity3D.Geometry
 
             for (int i = 0; i < path.Count - 1; i++)
             {
-                int baseIdx = i * 2;
-                
-                triangles.Add(baseIdx); // Left current
-                triangles.Add(baseIdx + 2); // Left next
-                triangles.Add(baseIdx + 1); // Right current
-
-                triangles.Add(baseIdx + 1); // Right current
-                triangles.Add(baseIdx + 2); // Left next
-                triangles.Add(baseIdx + 3); // Right next
+                int bi = i * 2;
+                triangles.Add(bi); triangles.Add(bi + 2); triangles.Add(bi + 1);
+                triangles.Add(bi + 1); triangles.Add(bi + 2); triangles.Add(bi + 3);
             }
 
             mesh.vertices = vertices.ToArray();
@@ -100,7 +167,6 @@ namespace GeoCity3D.Geometry
             mesh.RecalculateNormals();
 
             mf.mesh = mesh;
-            go.AddComponent<MeshCollider>();
 
             return go;
         }
