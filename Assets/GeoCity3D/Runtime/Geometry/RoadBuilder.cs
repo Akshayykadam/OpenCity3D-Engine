@@ -47,6 +47,9 @@ namespace GeoCity3D.Geometry
 
             float halfWidth = width / 2.0f;
 
+            float uvY = 0;
+            float scale = 0.2f; // Adjust road texture scale
+
             for (int i = 0; i < path.Count; i++)
             {
                 Vector3 current = path[i];
@@ -67,7 +70,13 @@ namespace GeoCity3D.Geometry
                 vertices.Add(current - right * halfWidth); // Left
                 vertices.Add(current + right * halfWidth); // Right
 
-                float uvY = i / (float)path.Count; // Stretch UV along road
+                // Calculate Distance for V coordinate
+                if (i > 0)
+                {
+                    float dist = Vector3.Distance(path[i], path[i - 1]);
+                    uvY += dist * scale;
+                }
+
                 uvs.Add(new Vector2(0, uvY));
                 uvs.Add(new Vector2(1, uvY));
             }
@@ -76,13 +85,13 @@ namespace GeoCity3D.Geometry
             {
                 int baseIdx = i * 2;
                 
-                triangles.Add(baseIdx);
-                triangles.Add(baseIdx + 2);
-                triangles.Add(baseIdx + 1);
+                triangles.Add(baseIdx); // Left current
+                triangles.Add(baseIdx + 2); // Left next
+                triangles.Add(baseIdx + 1); // Right current
 
-                triangles.Add(baseIdx + 1);
-                triangles.Add(baseIdx + 2);
-                triangles.Add(baseIdx + 3);
+                triangles.Add(baseIdx + 1); // Right current
+                triangles.Add(baseIdx + 2); // Left next
+                triangles.Add(baseIdx + 3); // Right next
             }
 
             mesh.vertices = vertices.ToArray();

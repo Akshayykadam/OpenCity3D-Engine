@@ -106,7 +106,7 @@ namespace GeoCity3D.Editor
             {
                 if (way.HasTag("building"))
                 {
-                    GameObject building = BuildingBuilder.Build(way, data, _cityController.BuildingMaterial, shifter);
+                    GameObject building = BuildingBuilder.Build(way, data, _cityController.BuildingWallMaterial, _cityController.BuildingRoofMaterial, shifter);
                     if (building != null)
                     {
                         building.transform.SetParent(cityRoot.transform);
