@@ -7,44 +7,74 @@ namespace GeoCity3D.Network
 {
     public class OverpassClient
     {
-        private const string OverpassApiUrl = "https://overpass-api.de/api/interpreter";
+        private static readonly string[] OverpassApiUrls = new string[]
+        {
+            "https://overpass-api.de/api/interpreter",
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter", // Fallback 1
+            "https://overpass.kumi.systems/api/interpreter"             // Fallback 2
+        };
 
         public IEnumerator GetMapData(double lat, double lon, double radius, Action<string> onSuccess, Action<string> onError)
         {
             string query = BuildQuery(lat, lon, radius);
-            string url = $"{OverpassApiUrl}?data={UnityWebRequest.EscapeURL(query)}";
+            string focusedQuery = BuildFocusedQuery(lat, lon, radius);
+            bool success = false;
+            string lastError = "";
 
-            using (UnityWebRequest webRequest = UnityWebRequest.Get(url))
+            // Try the full query across fallback servers first
+            foreach (string baseUrl in OverpassApiUrls)
             {
-                webRequest.timeout = 60; // Increased timeout for larger areas
-                yield return webRequest.SendWebRequest();
-
-                if (webRequest.result == UnityWebRequest.Result.ConnectionError || webRequest.result == UnityWebRequest.Result.ProtocolError)
+                string url = $"{baseUrl}?data={UnityWebRequest.EscapeURL(query)}";
+                using (UnityWebRequest webRequest = UnityWebRequest.Get(url))
                 {
-                    // Retry once with a smaller, focused query
-                    Debug.Log("First attempt failed, retrying with focused query...");
-                    string retryQuery = BuildFocusedQuery(lat, lon, radius);
-                    string retryUrl = $"{OverpassApiUrl}?data={UnityWebRequest.EscapeURL(retryQuery)}";
+                    webRequest.timeout = 60;
+                    yield return webRequest.SendWebRequest();
 
+                    if (webRequest.result == UnityWebRequest.Result.Success)
+                    {
+                        onSuccess?.Invoke(webRequest.downloadHandler.text);
+                        success = true;
+                        break;
+                    }
+                    else
+                    {
+                        lastError = webRequest.error;
+                        Debug.LogWarning($"Primary Query failed on {baseUrl}: {webRequest.error}");
+                    }
+                }
+            }
+
+            // If full query failed on ALL servers, try focused query on ALL servers
+            if (!success)
+            {
+                Debug.LogWarning("⚠️ OVERPASS API LIMIT HIT ⚠️\nThe Overpass servers are extremely busy or rate-limiting your connection. Falling back to a lightweight query (Buildings and Highways ONLY). Parks, water, beaches, etc., will be temporarily missing from the generation!\nWait 2-3 minutes before trying again for a complete map.");
+                
+                foreach (string baseUrl in OverpassApiUrls)
+                {
+                    string retryUrl = $"{baseUrl}?data={UnityWebRequest.EscapeURL(focusedQuery)}";
                     using (UnityWebRequest retry = UnityWebRequest.Get(retryUrl))
                     {
-                        retry.timeout = 90;
+                        retry.timeout = 60;
                         yield return retry.SendWebRequest();
 
-                        if (retry.result == UnityWebRequest.Result.ConnectionError || retry.result == UnityWebRequest.Result.ProtocolError)
+                        if (retry.result == UnityWebRequest.Result.Success)
                         {
-                            onError?.Invoke(retry.error);
+                            onSuccess?.Invoke(retry.downloadHandler.text);
+                            success = true;
+                            break;
                         }
                         else
                         {
-                            onSuccess?.Invoke(retry.downloadHandler.text);
+                            lastError = retry.error;
+                            Debug.LogWarning($"Focused Query failed on {baseUrl}: {retry.error}");
                         }
                     }
                 }
-                else
-                {
-                    onSuccess?.Invoke(webRequest.downloadHandler.text);
-                }
+            }
+
+            if (!success)
+            {
+                onError?.Invoke($"All Overpass servers failed. Last error: {lastError}");
             }
         }
 

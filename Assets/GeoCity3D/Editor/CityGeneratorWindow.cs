@@ -155,18 +155,23 @@ namespace GeoCity3D.Editor
             // 5. MATERIALS — Procedural textured materials
             // ═══════════════════════════════════════════════════════════
 
-            // Buildings — clean light gray
-            Material buildingMat = CreateSolidMaterial(shader, new Color(0.82f, 0.82f, 0.82f), 0.15f);
-            // Roofs — slightly darker gray
-            Material roofMat = CreateSolidMaterial(shader, new Color(0.72f, 0.72f, 0.72f), 0.1f);
+            // Buildings
+            Material buildingMat = _cityController.BuildingWallMaterial != null ? _cityController.BuildingWallMaterial : CreateSolidMaterial(shader, new Color(0.82f, 0.82f, 0.82f), 0.15f);
+            Material roofMat = _cityController.BuildingRoofMaterial != null ? _cityController.BuildingRoofMaterial : CreateSolidMaterial(shader, new Color(0.72f, 0.72f, 0.72f), 0.1f);
 
-            // Roads — per-type textured materials with normal maps for depth
+            // Roads
             Texture2D roadNormalMap = TextureGenerator.CreateAsphaltNormalMap();
-            Material motorwayMat = CreateTexturedMaterial(shader, TextureGenerator.CreateMotorwayTexture(), roadNormalMap, 0.05f);
-            Material primaryRoadMat = CreateTexturedMaterial(shader, TextureGenerator.CreatePrimaryRoadTexture(), roadNormalMap, 0.05f);
-            Material residentialRoadMat = CreateTexturedMaterial(shader, TextureGenerator.CreateResidentialRoadTexture(), roadNormalMap, 0.05f);
-            Material footpathMat = CreateTexturedMaterial(shader, TextureGenerator.CreateFootpathTexture(), 0.05f);
-            Material crosswalkMat = CreateTexturedMaterial(shader, TextureGenerator.CreateCrosswalkTexture(), 0.05f);
+            yield return null;
+            Material motorwayMat = _cityController.MotorwayMaterial != null ? _cityController.MotorwayMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateMotorwayTexture(), roadNormalMap, 0.05f);
+            yield return null;
+            Material primaryRoadMat = _cityController.PrimaryRoadMaterial != null ? _cityController.PrimaryRoadMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreatePrimaryRoadTexture(), roadNormalMap, 0.05f);
+            yield return null;
+            Material residentialRoadMat = _cityController.ResidentialRoadMaterial != null ? _cityController.ResidentialRoadMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateResidentialRoadTexture(), roadNormalMap, 0.05f);
+            yield return null;
+            Material footpathMat = _cityController.FootpathMaterial != null ? _cityController.FootpathMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateFootpathTexture(), 0.05f);
+            yield return null;
+            Material crosswalkMat = _cityController.CrosswalkMaterial != null ? _cityController.CrosswalkMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateCrosswalkTexture(), 0.05f);
+            yield return null;
 
             Dictionary<string, Material> roadMaterials = new Dictionary<string, Material>
             {
@@ -176,17 +181,16 @@ namespace GeoCity3D.Editor
                 { "footpath", footpathMat }
             };
 
-            // Sidewalks — paver texture
-            Material sidewalkMat = CreateTexturedMaterial(shader, TextureGenerator.CreateSidewalkTexture(), 0.1f);
-            // Parks — lush green texture
-            Material parkMat = CreateTexturedMaterial(shader, TextureGenerator.CreateParkTexture(), 0.05f);
-            // Water — deep blue texture
-            Material waterMat = CreateTexturedMaterial(shader, TextureGenerator.CreateWaterTexture(), 0.6f);
-            // Beach/Sand — warm tan
+            // Infrastructure & Areas
+            Material sidewalkMat = _cityController.SidewalkMaterial != null ? _cityController.SidewalkMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateSidewalkTexture(), 0.1f);
+            yield return null;
+            Material parkMat = _cityController.ParkMaterial != null ? _cityController.ParkMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateParkTexture(), 0.05f);
+            yield return null;
+            Material waterMat = _cityController.WaterMaterial != null ? _cityController.WaterMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateWaterTexture(), 0.6f);
+            yield return null;
             Material beachMat = CreateSolidMaterial(shader, new Color(0.82f, 0.72f, 0.52f), 0.05f);
-            // Ground/Base — earth texture
-            Material groundMat = CreateTexturedMaterial(shader, TextureGenerator.CreateGroundTexture(), 0.1f);
-            // Platform sides — darker solid
+            Material groundMat = _cityController.GroundMaterial != null ? _cityController.GroundMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateGroundTexture(), 0.1f);
+            yield return null;
             Material platformMat = CreateSolidMaterial(shader, new Color(0.28f, 0.28f, 0.30f), 0.15f);
 
             // 6. Generate Geometry
