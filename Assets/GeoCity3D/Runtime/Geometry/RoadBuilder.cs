@@ -125,7 +125,7 @@ namespace GeoCity3D.Geometry
 
             if (isBridge)
             {
-                return BuildBridge(path, width, roadMat, sidewalkMaterial, way.Id, highwayType);
+                return BridgeBuilder.Build(path, width, roadMat, sidewalkMaterial, way.Id, highwayType);
             }
 
             // ── Normal road ──
@@ -174,122 +174,6 @@ namespace GeoCity3D.Geometry
             return Build(way, data, material, null, originShifter, defaultWidth);
         }
 
-        // ══════════════════════════════════════════════════════════════
-        //  BRIDGE — elevated deck + railings + support pillars
-        // ══════════════════════════════════════════════════════════════
-
-        private static GameObject BuildBridge(List<Vector3> path, float width,
-            Material roadMat, Material sidewalkMat, long id, string highwayType)
-        {
-            GameObject parent = new GameObject($"Bridge_{id}");
-
-            // Elevated path
-            List<Vector3> elevatedPath = new List<Vector3>();
-            for (int i = 0; i < path.Count; i++)
-            {
-                elevatedPath.Add(new Vector3(path[i].x, BRIDGE_ELEVATION, path[i].z));
-            }
-
-            // ── Bridge deck (thick slab) ──
-            GameObject deck = CreateSolidStrip(elevatedPath, width + 1f, BRIDGE_ELEVATION,
-                BRIDGE_DECK_THICKNESS, roadMat, $"BridgeDeck_{id}");
-            if (deck != null) deck.transform.SetParent(parent.transform);
-
-            // ── Railings (left and right) ──
-            if (sidewalkMat != null)
-            {
-                float halfWidth = (width + 1f) / 2f;
-
-                for (int side = -1; side <= 1; side += 2)
-                {
-                    List<Vector3> railPath = new List<Vector3>();
-                    for (int i = 0; i < elevatedPath.Count; i++)
-                    {
-                        Vector3 forward = GetForward(elevatedPath, i);
-                        Vector3 right = Vector3.Cross(Vector3.up, forward).normalized;
-                        railPath.Add(elevatedPath[i] + right * halfWidth * side);
-                    }
-
-                    string railName = side < 0 ? $"RailL_{id}" : $"RailR_{id}";
-                    GameObject rail = CreateSolidStrip(railPath, BRIDGE_RAIL_THICKNESS,
-                        BRIDGE_ELEVATION + BRIDGE_RAIL_HEIGHT / 2f,
-                        BRIDGE_RAIL_HEIGHT, sidewalkMat, railName);
-                    if (rail != null) rail.transform.SetParent(parent.transform);
-                }
-            }
-
-            // ── Support pillars ──
-            float totalLength = 0f;
-            for (int i = 1; i < path.Count; i++)
-                totalLength += Vector3.Distance(path[i], path[i - 1]);
-
-            int pillarCount = Mathf.Max(2, Mathf.FloorToInt(totalLength / PILLAR_SPACING) + 1);
-
-            for (int p = 0; p < pillarCount; p++)
-            {
-                float t = (float)p / (pillarCount - 1);
-                Vector3 pos = GetPointAlongPath(path, t);
-                pos.y = 0;
-
-                GameObject pillar = CreatePillar(pos, PILLAR_WIDTH, BRIDGE_ELEVATION,
-                    roadMat, $"Pillar_{id}_{p}");
-                if (pillar != null) pillar.transform.SetParent(parent.transform);
-            }
-
-            return parent;
-        }
-
-        // ── Support Pillar (solid box) ──
-
-        private static GameObject CreatePillar(Vector3 basePos, float size, float height,
-            Material mat, string name)
-        {
-            GameObject go = new GameObject(name);
-            MeshFilter mf = go.AddComponent<MeshFilter>();
-            MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.material = mat;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
-
-            float half = size / 2f;
-            Mesh mesh = new Mesh();
-
-            Vector3[] verts = new Vector3[]
-            {
-                // Bottom face
-                basePos + new Vector3(-half, 0, -half),
-                basePos + new Vector3( half, 0, -half),
-                basePos + new Vector3( half, 0,  half),
-                basePos + new Vector3(-half, 0,  half),
-                // Top face
-                basePos + new Vector3(-half, height, -half),
-                basePos + new Vector3( half, height, -half),
-                basePos + new Vector3( half, height,  half),
-                basePos + new Vector3(-half, height,  half),
-            };
-
-            int[] tris = new int[]
-            {
-                // Front
-                0,4,1, 1,4,5,
-                // Right
-                1,5,2, 2,5,6,
-                // Back
-                2,6,3, 3,6,7,
-                // Left
-                3,7,0, 0,7,4,
-                // Top
-                4,7,5, 5,7,6,
-                // Bottom
-                0,1,3, 1,2,3,
-            };
-
-            mesh.vertices = verts;
-            mesh.triangles = tris;
-            mesh.RecalculateNormals();
-            mesh.RecalculateBounds();
-            mf.sharedMesh = mesh;
-            return go;
-        }
 
         // ══════════════════════════════════════════════════════════════
         //  ROAD STRIP WITH THICKNESS
@@ -324,7 +208,7 @@ namespace GeoCity3D.Geometry
             }
         }
 
-        private static GameObject CreateSolidStrip(List<Vector3> path, float width,
+        public static GameObject CreateSolidStrip(List<Vector3> path, float width,
             float surfaceY, float thickness, Material material, string name)
         {
             if (path.Count < 2) return null;
@@ -421,7 +305,7 @@ namespace GeoCity3D.Geometry
 
         // ── Helpers ──
 
-        private static Vector3 GetForward(List<Vector3> path, int i)
+        public static Vector3 GetForward(List<Vector3> path, int i)
         {
             Vector3 forward = Vector3.zero;
             if (i < path.Count - 1) forward += (path[i + 1] - path[i]).normalized;
@@ -431,7 +315,7 @@ namespace GeoCity3D.Geometry
             return forward;
         }
 
-        private static Vector3 GetPointAlongPath(List<Vector3> path, float t)
+        public static Vector3 GetPointAlongPath(List<Vector3> path, float t)
         {
             if (path.Count < 2) return path[0];
             if (t <= 0f) return path[0];

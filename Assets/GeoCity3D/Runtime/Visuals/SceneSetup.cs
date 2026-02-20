@@ -18,8 +18,9 @@ namespace GeoCity3D.Visuals
         {
             // Bright ambient so shadows aren't pitch black
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-            RenderSettings.ambientLight = new Color(0.55f, 0.55f, 0.60f); // Bright neutral gray
-            RenderSettings.ambientIntensity = 1.2f;
+            // Warm, bright afternoon light (slightly yellowish/orange tint)
+            RenderSettings.ambientLight = new Color(0.85f, 0.82f, 0.75f);
+            RenderSettings.ambientIntensity = 1.5f;
 
             // Ensure shadows are enabled if in Built-in pipeline
             QualitySettings.shadows = ShadowQuality.All;
@@ -70,23 +71,23 @@ namespace GeoCity3D.Visuals
                     TryAddVolumeOverride(profile, "UnityEngine.Rendering.Universal.Bloom, Unity.RenderPipelines.Universal.Runtime",
                         new System.Collections.Generic.Dictionary<string, object>
                         {
-                            { "intensity", 0.3f },
-                            { "threshold", 1.1f },
+                            { "intensity", 0.45f }, // Increased for a brighter, dreamier afternoon look
+                            { "threshold", 1.0f },
                             { "scatter", 0.65f }
                         });
 
                     TryAddVolumeOverride(profile, "UnityEngine.Rendering.Universal.Vignette, Unity.RenderPipelines.Universal.Runtime",
                         new System.Collections.Generic.Dictionary<string, object>
                         {
-                            { "intensity", 0.25f },
+                            { "intensity", 0.2f }, // Slightly reduced so it doesn't darken the edges as much
                             { "smoothness", 0.4f }
                         });
 
                     TryAddVolumeOverride(profile, "UnityEngine.Rendering.Universal.ColorAdjustments, Unity.RenderPipelines.Universal.Runtime",
                         new System.Collections.Generic.Dictionary<string, object>
                         {
-                            { "contrast", 10f },
-                            { "saturation", 8f }
+                            { "contrast", 15f },  // More pop
+                            { "saturation", 25f } // Significantly more colorful
                         });
                 }
 
