@@ -13,8 +13,8 @@ namespace GeoCity3D.Editor
 {
     public class CityGeneratorWindow : EditorWindow
     {
-        private double _latitude = 51.5025605;
-        private double _longitude = -0.0811455;
+        private double _latitude = 50.10152436;
+        private double _longitude = 8.66424154;
         private float _radius = 1000f;
         
         private CityController _cityController;
@@ -80,6 +80,22 @@ namespace GeoCity3D.Editor
             return mat;
         }
 
+        // ── Textured material with normal map ──
+        private Material CreateTexturedMaterial(Shader shader, Texture2D texture, Texture2D normalMap, float smoothness = 0.05f)
+        {
+            Material mat = CreateTexturedMaterial(shader, texture, smoothness);
+            if (normalMap != null)
+            {
+                if (mat.HasProperty("_BumpMap"))
+                {
+                    mat.SetTexture("_BumpMap", normalMap);
+                    mat.EnableKeyword("_NORMALMAP");
+                    mat.SetFloat("_BumpScale", 1.0f);
+                }
+            }
+            return mat;
+        }
+
         private Shader FindBestShader()
         {
             Shader shader = Shader.Find("Universal Render Pipeline/Lit");
@@ -136,18 +152,19 @@ namespace GeoCity3D.Editor
             }
 
             // ═══════════════════════════════════════════════════════════
-            // 5. MATERIALS — Textured road-type materials + solid colors
+            // 5. MATERIALS — Procedural textured materials
             // ═══════════════════════════════════════════════════════════
 
-            // Buildings — clean light gray with slight warmth
+            // Buildings — clean light gray
             Material buildingMat = CreateSolidMaterial(shader, new Color(0.82f, 0.82f, 0.82f), 0.15f);
             // Roofs — slightly darker gray
             Material roofMat = CreateSolidMaterial(shader, new Color(0.72f, 0.72f, 0.72f), 0.1f);
 
-            // Roads — per-type textured materials
-            Material motorwayMat = CreateTexturedMaterial(shader, TextureGenerator.CreateMotorwayTexture(), 0.05f);
-            Material primaryRoadMat = CreateTexturedMaterial(shader, TextureGenerator.CreatePrimaryRoadTexture(), 0.05f);
-            Material residentialRoadMat = CreateTexturedMaterial(shader, TextureGenerator.CreateResidentialRoadTexture(), 0.05f);
+            // Roads — per-type textured materials with normal maps for depth
+            Texture2D roadNormalMap = TextureGenerator.CreateAsphaltNormalMap();
+            Material motorwayMat = CreateTexturedMaterial(shader, TextureGenerator.CreateMotorwayTexture(), roadNormalMap, 0.05f);
+            Material primaryRoadMat = CreateTexturedMaterial(shader, TextureGenerator.CreatePrimaryRoadTexture(), roadNormalMap, 0.05f);
+            Material residentialRoadMat = CreateTexturedMaterial(shader, TextureGenerator.CreateResidentialRoadTexture(), roadNormalMap, 0.05f);
             Material footpathMat = CreateTexturedMaterial(shader, TextureGenerator.CreateFootpathTexture(), 0.05f);
             Material crosswalkMat = CreateTexturedMaterial(shader, TextureGenerator.CreateCrosswalkTexture(), 0.05f);
 
@@ -159,17 +176,17 @@ namespace GeoCity3D.Editor
                 { "footpath", footpathMat }
             };
 
-            // Sidewalks — medium gray
-            Material sidewalkMat = CreateSolidMaterial(shader, new Color(0.60f, 0.60f, 0.60f), 0.1f);
-            // Parks — vibrant green
-            Material parkMat = CreateSolidMaterial(shader, new Color(0.18f, 0.55f, 0.12f), 0.05f);
-            // Water — dark teal
-            Material waterMat = CreateSolidMaterial(shader, new Color(0.15f, 0.30f, 0.38f), 0.6f);
+            // Sidewalks — paver texture
+            Material sidewalkMat = CreateTexturedMaterial(shader, TextureGenerator.CreateSidewalkTexture(), 0.1f);
+            // Parks — lush green texture
+            Material parkMat = CreateTexturedMaterial(shader, TextureGenerator.CreateParkTexture(), 0.05f);
+            // Water — deep blue texture
+            Material waterMat = CreateTexturedMaterial(shader, TextureGenerator.CreateWaterTexture(), 0.6f);
             // Beach/Sand — warm tan
             Material beachMat = CreateSolidMaterial(shader, new Color(0.82f, 0.72f, 0.52f), 0.05f);
-            // Ground/Base — dark gray
-            Material groundMat = CreateSolidMaterial(shader, new Color(0.35f, 0.35f, 0.37f), 0.1f);
-            // Platform sides — darker
+            // Ground/Base — earth texture
+            Material groundMat = CreateTexturedMaterial(shader, TextureGenerator.CreateGroundTexture(), 0.1f);
+            // Platform sides — darker solid
             Material platformMat = CreateSolidMaterial(shader, new Color(0.28f, 0.28f, 0.30f), 0.15f);
 
             // 6. Generate Geometry
@@ -205,7 +222,6 @@ namespace GeoCity3D.Editor
             {
                 if (way.HasTag("building"))
                 {
-                    // No atlas needed — single solid color for all buildings
                     GameObject building = BuildingBuilder.Build(way, data,
                         buildingMat, roofMat, shifter);
 
@@ -357,7 +373,44 @@ namespace GeoCity3D.Editor
             GameObject ground = GroundBuilder.Build(_radius, groundMat, platformMat);
             ground.transform.SetParent(cityRoot.transform);
 
-            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}");
+            // 10. Street lights along roads
+            int streetLightCount = 0;
+            GameObject lightsParent = new GameObject("StreetLights");
+            lightsParent.transform.SetParent(cityRoot.transform);
+
+            foreach (var way in data.Ways)
+            {
+                if (!way.HasTag("highway")) continue;
+                string hwType = (way.GetTag("highway") ?? "").ToLower();
+                // Skip footways and paths — no street lights
+                if (hwType == "footway" || hwType == "path" || hwType == "steps" || hwType == "cycleway") continue;
+
+                List<Vector3> roadPath = new List<Vector3>();
+                foreach (long nodeId in way.NodeIds)
+                {
+                    if (data.Nodes.TryGetValue(nodeId, out OsmNode node))
+                        roadPath.Add(shifter.GetLocalPosition(node.Latitude, node.Longitude));
+                }
+
+                List<GameObject> lights = StreetFurnitureBuilder.PlaceStreetLights(roadPath, shader, 25f);
+                foreach (var light in lights)
+                {
+                    if (!IsInsideAnyBuilding(light.transform.position, buildingBounds))
+                    {
+                        light.transform.SetParent(lightsParent.transform);
+                        streetLightCount++;
+                    }
+                    else
+                    {
+                        Object.DestroyImmediate(light);
+                    }
+                }
+            }
+
+            // 11. Scene atmosphere (lighting, fog, post-processing)
+            SceneSetup.Setup(_radius);
+
+            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}, StreetLights: {streetLightCount}");
             _isGenerating = false;
         }
 

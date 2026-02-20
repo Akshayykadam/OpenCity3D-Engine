@@ -704,5 +704,51 @@ namespace GeoCity3D.Visuals
             tex.filterMode = FilterMode.Bilinear;
             return tex;
         }
+
+        // ═══════════════════════════════════════════════
+        //  NORMAL MAP — asphalt surface depth
+        // ═══════════════════════════════════════════════
+
+        public static Texture2D CreateAsphaltNormalMap(int width = 256, int height = 256)
+        {
+            Texture2D tex = new Texture2D(width, height, TextureFormat.RGBA32, true, true);
+            Color[] pixels = new Color[width * height];
+
+            float scale = 0.4f;
+            float strength = 1.2f;
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    // Sample heights from Perlin noise
+                    float h = Mathf.PerlinNoise(x * scale + 100f, y * scale + 100f);
+                    float hx = Mathf.PerlinNoise((x + 1) * scale + 100f, y * scale + 100f);
+                    float hy = Mathf.PerlinNoise(x * scale + 100f, (y + 1) * scale + 100f);
+
+                    // Add fine-grain detail
+                    h += Mathf.PerlinNoise(x * 1.5f + 300f, y * 1.5f + 300f) * 0.3f;
+                    hx += Mathf.PerlinNoise((x + 1) * 1.5f + 300f, y * 1.5f + 300f) * 0.3f;
+                    hy += Mathf.PerlinNoise(x * 1.5f + 300f, (y + 1) * 1.5f + 300f) * 0.3f;
+
+                    // Compute normal from height differences
+                    float dx = (h - hx) * strength;
+                    float dy = (h - hy) * strength;
+
+                    // Pack into tangent-space normal (0.5 = zero, 0..1 range)
+                    float nx = dx * 0.5f + 0.5f;
+                    float ny = dy * 0.5f + 0.5f;
+                    float nz = 1.0f; // Pointing up
+
+                    pixels[y * width + x] = new Color(nx, ny, nz, 1f);
+                }
+            }
+
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
     }
 }

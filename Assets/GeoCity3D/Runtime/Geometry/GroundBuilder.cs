@@ -12,7 +12,7 @@ namespace GeoCity3D.Geometry
         {
             GameObject go = new GameObject("Ground");
             
-            float size = radius * 2.2f;
+            float size = radius * 3.0f;
             float half = size / 2f;
             float platformHeight = radius * 0.04f; // Proportional height
             platformHeight = Mathf.Clamp(platformHeight, 3f, 25f);
