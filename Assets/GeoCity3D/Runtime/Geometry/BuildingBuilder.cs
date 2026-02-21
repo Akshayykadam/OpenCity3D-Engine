@@ -86,6 +86,11 @@ namespace GeoCity3D.Geometry
             // ── OUTER WALLS of lower section ──
             AddSolidWalls(footprint, 0f, mainHeight, wOff, wScl, verts, uvs, wallTris);
 
+            // ── Architectural detail on lower section ──
+            AddBasePlinth(footprint, 0f, verts, uvs, wallTris);
+            AddFloorLedges(footprint, 0f, mainHeight, verts, uvs, wallTris);
+            AddWindowRecesses(footprint, 0f, mainHeight, verts, uvs, wallTris);
+
             // ── BOTTOM CAP (face down — seals the base, sits flush on ground) ──
             float minX, maxX, minZ, maxZ;
             ComputeBounds(footprint, out minX, out maxX, out minZ, out maxZ);
@@ -100,13 +105,18 @@ namespace GeoCity3D.Geometry
                 // ── Terrace cap at main height (face up) ──
                 AddSolidCap(footprint, mainHeight, minX, maxX, minZ, maxZ, verts, uvs, roofTris, false);
 
-                // ── Upper section walls ──
+                // ── Upper section walls + detail ──
                 AddSolidWalls(upperFootprint, mainHeight, setbackHeight, wOff, wScl, verts, uvs, wallTris);
+                AddFloorLedges(upperFootprint, mainHeight, setbackHeight, verts, uvs, wallTris);
+                AddWindowRecesses(upperFootprint, mainHeight, setbackHeight, verts, uvs, wallTris);
 
                 // ── Upper roof ──
                 float uMinX, uMaxX, uMinZ, uMaxZ;
                 ComputeBounds(upperFootprint, out uMinX, out uMaxX, out uMinZ, out uMaxZ);
                 float topY = mainHeight + setbackHeight;
+
+                // Cornice at the top
+                AddCornice(upperFootprint, topY, verts, uvs, wallTris);
 
                 if (pitchedRoof)
                 {
@@ -123,6 +133,10 @@ namespace GeoCity3D.Geometry
             else
             {
                 // ── Single volume — top cap + optional parapet ──
+                // Cornice at the roof line
+                if (!pitchedRoof && mainHeight > 4f)
+                    AddCornice(footprint, mainHeight, verts, uvs, wallTris);
+
                 if (pitchedRoof)
                 {
                     AddPitchedRoof(footprint, mainHeight, rOff, rScl, minX, maxX, minZ, maxZ, verts, uvs, roofTris);
@@ -342,6 +356,281 @@ namespace GeoCity3D.Geometry
                 tris.Add(baseIdx + i);
                 tris.Add(peakIdx);
                 tris.Add(baseIdx + next);
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  FLOOR LEDGES — thin horizontal bands every ~3.2m (one floor)
+        //  Creates shadow-catching geometry that shows floor separation
+        // ══════════════════════════════════════════════════════════════
+
+        private static void AddFloorLedges(List<Vector3> footprint, float baseY, float totalHeight,
+            List<Vector3> verts, List<Vector2> uvs, List<int> wallTris)
+        {
+            float floorHeight = 3.2f;
+            float ledgeDepth = 0.12f;  // How far the ledge sticks out
+            float ledgeThickness = 0.15f; // Vertical thickness of the band
+
+            int floors = Mathf.FloorToInt(totalHeight / floorHeight);
+            if (floors < 2) return; // No ledges for single-floor
+
+            for (int floor = 1; floor < floors; floor++)
+            {
+                float ledgeY = baseY + floor * floorHeight;
+                float ledgeTop = ledgeY + ledgeThickness * 0.5f;
+                float ledgeBot = ledgeY - ledgeThickness * 0.5f;
+
+                for (int i = 0; i < footprint.Count; i++)
+                {
+                    Vector3 p1 = footprint[i];
+                    Vector3 p2 = footprint[(i + 1) % footprint.Count];
+
+                    // Wall outward normal (2D) — for CCW footprint
+                    Vector3 wallDir = (p2 - p1).normalized;
+                    Vector3 outward = new Vector3(wallDir.z, 0, -wallDir.x) * ledgeDepth;
+
+                    // Outer corners of the ledge
+                    Vector3 ob1 = new Vector3(p1.x, ledgeBot, p1.z) + outward;
+                    Vector3 ob2 = new Vector3(p2.x, ledgeBot, p2.z) + outward;
+                    Vector3 ot1 = new Vector3(p1.x, ledgeTop, p1.z) + outward;
+                    Vector3 ot2 = new Vector3(p2.x, ledgeTop, p2.z) + outward;
+
+                    // Inner corners (on the wall surface)
+                    Vector3 ib1 = new Vector3(p1.x, ledgeBot, p1.z);
+                    Vector3 ib2 = new Vector3(p2.x, ledgeBot, p2.z);
+                    Vector3 it1 = new Vector3(p1.x, ledgeTop, p1.z);
+                    Vector3 it2 = new Vector3(p2.x, ledgeTop, p2.z);
+
+                    // Front face (outward-facing)
+                    int bi = verts.Count;
+                    verts.Add(ob1); verts.Add(ob2); verts.Add(ot2); verts.Add(ot1);
+                    uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                    uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                    wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
+                    wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+
+                    // Top face (face up — catches light)
+                    bi = verts.Count;
+                    verts.Add(it1); verts.Add(it2); verts.Add(ot2); verts.Add(ot1);
+                    uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                    uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                    wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
+                    wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+
+                    // Bottom face (face down — creates shadow)
+                    bi = verts.Count;
+                    verts.Add(ib1); verts.Add(ib2); verts.Add(ob2); verts.Add(ob1);
+                    uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                    uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                    wallTris.Add(bi); wallTris.Add(bi + 1); wallTris.Add(bi + 2);
+                    wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 3);
+                }
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  BASE PLINTH — wider band at ground level (0 to ~1m)
+        //  Grounds the building visually
+        // ══════════════════════════════════════════════════════════════
+
+        private static void AddBasePlinth(List<Vector3> footprint, float baseY,
+            List<Vector3> verts, List<Vector2> uvs, List<int> wallTris)
+        {
+            float plinthHeight = 0.8f;
+            float plinthDepth = 0.1f;
+
+            for (int i = 0; i < footprint.Count; i++)
+            {
+                Vector3 p1 = footprint[i];
+                Vector3 p2 = footprint[(i + 1) % footprint.Count];
+
+                Vector3 wallDir = (p2 - p1).normalized;
+                Vector3 outward = new Vector3(wallDir.z, 0, -wallDir.x) * plinthDepth;
+
+                Vector3 ob1 = new Vector3(p1.x, baseY, p1.z) + outward;
+                Vector3 ob2 = new Vector3(p2.x, baseY, p2.z) + outward;
+                Vector3 ot1 = new Vector3(p1.x, baseY + plinthHeight, p1.z) + outward;
+                Vector3 ot2 = new Vector3(p2.x, baseY + plinthHeight, p2.z) + outward;
+
+                // Front face
+                int bi = verts.Count;
+                verts.Add(ob1); verts.Add(ob2); verts.Add(ot2); verts.Add(ot1);
+                uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
+                wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+
+                // Top face (lip of the plinth)
+                Vector3 it1 = new Vector3(p1.x, baseY + plinthHeight, p1.z);
+                Vector3 it2 = new Vector3(p2.x, baseY + plinthHeight, p2.z);
+                bi = verts.Count;
+                verts.Add(it1); verts.Add(it2); verts.Add(ot2); verts.Add(ot1);
+                uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
+                wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  CORNICE — decorative overhang at rooftop edge
+        //  Creates a crown molding effect
+        // ══════════════════════════════════════════════════════════════
+
+        private static void AddCornice(List<Vector3> footprint, float roofY,
+            List<Vector3> verts, List<Vector2> uvs, List<int> wallTris)
+        {
+            float corniceDepth = 0.2f;
+            float corniceHeight = 0.3f;
+
+            float corniceBot = roofY - corniceHeight;
+
+            for (int i = 0; i < footprint.Count; i++)
+            {
+                Vector3 p1 = footprint[i];
+                Vector3 p2 = footprint[(i + 1) % footprint.Count];
+
+                Vector3 wallDir = (p2 - p1).normalized;
+                Vector3 outward = new Vector3(wallDir.z, 0, -wallDir.x) * corniceDepth;
+
+                // Outer overhang corners
+                Vector3 ob1 = new Vector3(p1.x, corniceBot, p1.z) + outward;
+                Vector3 ob2 = new Vector3(p2.x, corniceBot, p2.z) + outward;
+                Vector3 ot1 = new Vector3(p1.x, roofY, p1.z) + outward;
+                Vector3 ot2 = new Vector3(p2.x, roofY, p2.z) + outward;
+
+                // Front face of cornice
+                int bi = verts.Count;
+                verts.Add(ob1); verts.Add(ob2); verts.Add(ot2); verts.Add(ot1);
+                uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
+                wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+
+                // Bottom face (underside of overhang — visible from below)
+                Vector3 ib1 = new Vector3(p1.x, corniceBot, p1.z);
+                Vector3 ib2 = new Vector3(p2.x, corniceBot, p2.z);
+                bi = verts.Count;
+                verts.Add(ib1); verts.Add(ib2); verts.Add(ob2); verts.Add(ob1);
+                uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                wallTris.Add(bi); wallTris.Add(bi + 1); wallTris.Add(bi + 2);
+                wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 3);
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  WINDOW RECESSES — indented rectangles on each wall face
+        //  Creates realistic shadow-casting window openings
+        // ══════════════════════════════════════════════════════════════
+
+        private static void AddWindowRecesses(List<Vector3> footprint, float baseY, float totalHeight,
+            List<Vector3> verts, List<Vector2> uvs, List<int> wallTris)
+        {
+            float floorHeight = 3.2f;
+            float recessDepth = 0.08f;    // How deep windows are indented
+            float windowWidth = 1.2f;     // Window width in meters
+            float windowHeight = 1.6f;    // Window height
+            float windowBottom = 0.9f;    // Sill height from floor
+            float windowSpacing = 2.8f;   // Center-to-center distance between windows
+
+            int floors = Mathf.FloorToInt(totalHeight / floorHeight);
+            if (floors < 1) return;
+
+            for (int i = 0; i < footprint.Count; i++)
+            {
+                Vector3 p1 = footprint[i];
+                Vector3 p2 = footprint[(i + 1) % footprint.Count];
+
+                float wallLen = Vector3.Distance(
+                    new Vector3(p1.x, 0, p1.z),
+                    new Vector3(p2.x, 0, p2.z));
+
+                if (wallLen < windowSpacing) continue; // Wall too short for windows
+
+                Vector3 wallDir = (p2 - p1).normalized;
+                Vector3 inward = new Vector3(-wallDir.z, 0, wallDir.x) * recessDepth;
+
+                // How many windows fit on this wall
+                int winCount = Mathf.FloorToInt((wallLen - 1.0f) / windowSpacing);
+                if (winCount < 1) continue;
+
+                float startOffset = (wallLen - winCount * windowSpacing) * 0.5f + windowSpacing * 0.5f;
+
+                for (int floor = 0; floor < floors; floor++)
+                {
+                    float floorBase = baseY + floor * floorHeight;
+
+                    for (int w = 0; w < winCount; w++)
+                    {
+                        float centerDist = startOffset + w * windowSpacing;
+
+                        // Window center on the wall
+                        Vector3 wCenter = p1 + wallDir * centerDist;
+
+                        // Window rectangle corners (indented into the wall)
+                        float halfW = windowWidth * 0.5f;
+                        float winBot = floorBase + windowBottom;
+                        float winTop = winBot + windowHeight;
+
+                        Vector3 bl = wCenter - wallDir * halfW + inward;
+                        bl.y = winBot;
+                        Vector3 br = wCenter + wallDir * halfW + inward;
+                        br.y = winBot;
+                        Vector3 tr = wCenter + wallDir * halfW + inward;
+                        tr.y = winTop;
+                        Vector3 tl = wCenter - wallDir * halfW + inward;
+                        tl.y = winTop;
+
+                        // Recessed face (the window "glass" — darker because it's indented)
+                        int bi = verts.Count;
+                        verts.Add(bl); verts.Add(br); verts.Add(tr); verts.Add(tl);
+                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                        uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                        wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
+                        wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+
+                        // Sill (top of bottom reveal — horizontal face)
+                        Vector3 sbl = wCenter - wallDir * halfW; sbl.y = winBot;
+                        Vector3 sbr = wCenter + wallDir * halfW; sbr.y = winBot;
+                        bi = verts.Count;
+                        verts.Add(sbl); verts.Add(sbr); verts.Add(br); verts.Add(bl);
+                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                        uvs.Add(new Vector2(1, 0.3f)); uvs.Add(new Vector2(0, 0.3f));
+                        wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
+                        wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+
+                        // Lintel (bottom of top reveal — face down)
+                        Vector3 ltl = wCenter - wallDir * halfW; ltl.y = winTop;
+                        Vector3 ltr = wCenter + wallDir * halfW; ltr.y = winTop;
+                        bi = verts.Count;
+                        verts.Add(ltl); verts.Add(ltr); verts.Add(tr); verts.Add(tl);
+                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                        uvs.Add(new Vector2(1, 0.3f)); uvs.Add(new Vector2(0, 0.3f));
+                        wallTris.Add(bi); wallTris.Add(bi + 1); wallTris.Add(bi + 2);
+                        wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 3);
+
+                        // Left jamb (side reveal)
+                        Vector3 jbl = wCenter - wallDir * halfW; jbl.y = winBot;
+                        Vector3 jtl2 = wCenter - wallDir * halfW; jtl2.y = winTop;
+                        bi = verts.Count;
+                        verts.Add(jbl); verts.Add(bl); verts.Add(tl); verts.Add(jtl2);
+                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(0.3f, 0));
+                        uvs.Add(new Vector2(0.3f, 1)); uvs.Add(new Vector2(0, 1));
+                        wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
+                        wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+
+                        // Right jamb
+                        Vector3 jbr = wCenter + wallDir * halfW; jbr.y = winBot;
+                        Vector3 jtr2 = wCenter + wallDir * halfW; jtr2.y = winTop;
+                        bi = verts.Count;
+                        verts.Add(br); verts.Add(jbr); verts.Add(jtr2); verts.Add(tr);
+                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(0.3f, 0));
+                        uvs.Add(new Vector2(0.3f, 1)); uvs.Add(new Vector2(0, 1));
+                        wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
+                        wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+                    }
+                }
             }
         }
 

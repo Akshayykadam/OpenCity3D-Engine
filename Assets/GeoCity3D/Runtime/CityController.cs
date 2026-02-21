@@ -2,8 +2,21 @@ using UnityEngine;
 
 namespace GeoCity3D
 {
+    public enum BuildingMode
+    {
+        Procedural,  // Exact OSM footprint geometry with solid colors
+        Prefab       // FBX models scaled to fit lots
+    }
+
     public class CityController : MonoBehaviour
     {
+        [Header("Generation Mode")]
+        [Tooltip("Procedural = exact footprint geometry with solid colors. Prefab = FBX models scaled to fit.")]
+        public BuildingMode BuildingGenerationMode = BuildingMode.Procedural;
+
+        [Header("Building Models (Prefab Mode)")]
+        public GameObject[] BuildingPrefabs;
+
         [Header("Building Materials")]
         public Material BuildingWallMaterial;
         public Material BuildingRoofMaterial;

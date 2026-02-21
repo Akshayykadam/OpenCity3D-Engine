@@ -158,5 +158,55 @@ namespace GeoCity3D.Geometry
                 (-p0 + 3f * p1 - 3f * p2 + p3) * t3
             );
         }
+
+        // ═══════════════════════════════════════════════
+        // CONVEX HULL (Monotone Chain algorithm)
+        // ═══════════════════════════════════════════════
+
+        public static List<Vector3> GetConvexHull(List<Vector3> points)
+        {
+            if (points == null || points.Count <= 3)
+                return new List<Vector3>(points);
+
+            // Sort points lexicographically (first by x, then by z)
+            var sortedPoints = points.OrderBy(p => p.x).ThenBy(p => p.z).ToList();
+
+            List<Vector3> hull = new List<Vector3>();
+
+            // Build lower hull
+            foreach (var p in sortedPoints)
+            {
+                while (hull.Count >= 2 && Cross(hull[hull.Count - 2], hull[hull.Count - 1], p) <= 0)
+                {
+                    hull.RemoveAt(hull.Count - 1);
+                }
+                hull.Add(p);
+            }
+
+            // Build upper hull
+            int lowerCount = hull.Count;
+            for (int i = sortedPoints.Count - 2; i >= 0; i--)
+            {
+                var p = sortedPoints[i];
+                while (hull.Count > lowerCount && Cross(hull[hull.Count - 2], hull[hull.Count - 1], p) <= 0)
+                {
+                    hull.RemoveAt(hull.Count - 1);
+                }
+                hull.Add(p);
+            }
+
+            // Remove the last point because it's the same as the first one
+            hull.RemoveAt(hull.Count - 1);
+
+            return hull;
+        }
+
+        // 2D cross product of OA and OB vectors (using X and Z axes)
+        // Returns positive if OAB makes a counter-clockwise turn,
+        // negative for clockwise, and zero if the points are collinear.
+        private static float Cross(Vector3 o, Vector3 a, Vector3 b)
+        {
+            return (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+        }
     }
 }

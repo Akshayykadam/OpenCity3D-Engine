@@ -33,18 +33,23 @@ namespace GeoCity3D.Geometry
         public static readonly string[] FootpathTypes = { "footway", "path", "pedestrian", "cycleway", "steps", "track" };
 
         // ── Intersection endpoint registry ──
-        // Stores road endpoints for intersection detection
-        private static List<Vector3> _roadEndpoints = new List<Vector3>();
-        private static List<float> _roadWidths = new List<float>();
+        public struct RoadEnd
+        {
+            public Vector3 Position;
+            public Vector3 Direction;
+            public float Width;
+            public Material Material;
+            public string RoadClass;
+        }
+
+        private static List<RoadEnd> _roadEnds = new List<RoadEnd>();
 
         public static void ClearIntersectionData()
         {
-            _roadEndpoints.Clear();
-            _roadWidths.Clear();
+            _roadEnds.Clear();
         }
 
-        public static List<Vector3> GetRoadEndpoints() => _roadEndpoints;
-        public static List<float> GetRoadWidths() => _roadWidths;
+        public static List<RoadEnd> GetRoadEnds() => _roadEnds;
 
         /// <summary>
         /// Classify a highway type into a road category for material selection.
@@ -117,10 +122,27 @@ namespace GeoCity3D.Geometry
             // ── Track endpoints for intersection detection ──
             if (path.Count >= 2)
             {
-                _roadEndpoints.Add(path[0]);
-                _roadEndpoints.Add(path[path.Count - 1]);
-                _roadWidths.Add(width);
-                _roadWidths.Add(width);
+                // First point (direction is from p1 to p0 — pointing OUT of the road)
+                Vector3 dirStart = (path[0] - path[1]).normalized;
+                _roadEnds.Add(new RoadEnd
+                {
+                    Position = path[0],
+                    Direction = dirStart,
+                    Width = width,
+                    Material = roadMat,
+                    RoadClass = roadClass
+                });
+
+                // Last point (direction is from p[n-1] to p[n] — pointing OUT of the road)
+                Vector3 dirEnd = (path[path.Count - 1] - path[path.Count - 2]).normalized;
+                _roadEnds.Add(new RoadEnd
+                {
+                    Position = path[path.Count - 1],
+                    Direction = dirEnd,
+                    Width = width,
+                    Material = roadMat,
+                    RoadClass = roadClass
+                });
             }
 
             if (isBridge)

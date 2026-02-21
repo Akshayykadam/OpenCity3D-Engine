@@ -261,20 +261,44 @@ namespace GeoCity3D.Visuals
             float total = grain + p1 + p2 + p3;
             Color c = baseAsphalt + new Color(total, total, total);
 
-            // Subtle crack overlay
+            // Cracks — darker thin lines
             float crack = Mathf.PerlinNoise(x * 0.8f + seed + 400f, y * 0.8f + seed + 400f);
             if (crack > 0.78f)
             {
-                float crackStr = (crack - 0.78f) / 0.22f * 0.12f;
+                float crackStr = (crack - 0.78f) / 0.22f * 0.15f;
                 c -= new Color(crackStr, crackStr, crackStr);
             }
 
-            // Tire wear patches (slightly lighter)
+            // Tire wear lanes (slightly lighter in driving lanes)
             float wear = Mathf.PerlinNoise(x * 0.03f + seed + 300f, y * 0.02f + seed + 300f);
             if (wear > 0.6f)
             {
-                float wearStr = (wear - 0.6f) / 0.4f * 0.04f;
+                float wearStr = (wear - 0.6f) / 0.4f * 0.05f;
                 c += new Color(wearStr, wearStr, wearStr);
+            }
+
+            // Oil stains — dark irregular patches
+            float oil = Mathf.PerlinNoise(x * 0.06f + seed + 500f, y * 0.06f + seed + 500f);
+            if (oil > 0.75f)
+            {
+                float oilStr = (oil - 0.75f) / 0.25f * 0.08f;
+                c -= new Color(oilStr * 0.7f, oilStr * 0.8f, oilStr);
+            }
+
+            // Patching / repair marks — slightly different color patches
+            float patch = Mathf.PerlinNoise(x * 0.01f + seed + 600f, y * 0.01f + seed + 600f);
+            if (patch > 0.82f)
+            {
+                float pStr = (patch - 0.82f) / 0.18f * 0.06f;
+                c += new Color(pStr * 0.5f, pStr * 0.4f, pStr * 0.3f);
+            }
+
+            // Fine gravel aggregate specks
+            float speck = Mathf.PerlinNoise(x * 3.5f + seed + 700f, y * 3.5f + seed + 700f);
+            if (speck > 0.85f)
+            {
+                float s = (speck - 0.85f) / 0.15f * 0.04f;
+                c += new Color(s, s * 0.9f, s * 0.8f);
             }
 
             c.a = 1f;
@@ -283,16 +307,27 @@ namespace GeoCity3D.Visuals
 
         private static void DrawEdgeDarkening(Color[] pixels, int width, int height, float edgePct = 0.05f)
         {
+            float curbPct = 0.015f; // Concrete curb strip
             for (int y = 0; y < height; y++)
             {
                 for (int x = 0; x < width; x++)
                 {
                     float nx = (float)x / width;
-                    if (nx < edgePct)
-                        pixels[y * width + x] *= Mathf.Lerp(0.78f, 1f, nx / edgePct);
+                    int idx = y * width + x;
+
+                    // Curb strip (slightly lighter, like concrete)
+                    if (nx < curbPct || nx > 1f - curbPct)
+                    {
+                        Color curbColor = new Color(0.35f, 0.34f, 0.32f);
+                        pixels[idx] = Color.Lerp(pixels[idx], curbColor, 0.5f);
+                    }
+                    // Gutter shadow next to curb
+                    else if (nx < edgePct)
+                        pixels[idx] *= Mathf.Lerp(0.75f, 1f, (nx - curbPct) / (edgePct - curbPct));
                     else if (nx > 1f - edgePct)
-                        pixels[y * width + x] *= Mathf.Lerp(0.78f, 1f, (1f - nx) / edgePct);
-                    pixels[y * width + x].a = 1f;
+                        pixels[idx] *= Mathf.Lerp(0.75f, 1f, (1f - nx - curbPct) / (edgePct - curbPct));
+
+                    pixels[idx].a = 1f;
                 }
             }
         }
@@ -553,10 +588,13 @@ namespace GeoCity3D.Visuals
             Texture2D tex = new Texture2D(width, height);
             Color[] pixels = new Color[width * height];
 
-            Color earth = new Color(0.32f, 0.30f, 0.22f);      // Dark earth
-            Color earthLight = new Color(0.40f, 0.36f, 0.26f);  // Lighter earth
-            Color grassDark = new Color(0.22f, 0.35f, 0.15f);   // Dark green
-            Color grassLight = new Color(0.32f, 0.45f, 0.20f);  // Green patches
+            Color grassBase = new Color(0.16f, 0.38f, 0.10f);      // Primary green
+            Color grassLight = new Color(0.24f, 0.48f, 0.16f);     // Lighter green
+            Color grassYellow = new Color(0.32f, 0.44f, 0.14f);    // Warm green
+            Color earthPatch = new Color(0.32f, 0.28f, 0.20f);     // Small dirt patches
+            Color earthLight = new Color(0.38f, 0.34f, 0.24f);     // Light soil
+            Color pebble = new Color(0.42f, 0.40f, 0.34f);
+            Color puddle = new Color(0.20f, 0.28f, 0.18f);         // Damp grass
 
             for (int y = 0; y < height; y++)
             {
@@ -564,13 +602,28 @@ namespace GeoCity3D.Visuals
                 {
                     float n1 = Mathf.PerlinNoise(x * 0.012f + 100f, y * 0.012f + 100f);
                     float n2 = Mathf.PerlinNoise(x * 0.05f + 50f, y * 0.05f + 50f);
+                    float n3 = Mathf.PerlinNoise(x * 0.2f + 150f, y * 0.2f + 150f);
 
-                    // Mix earth and grass
-                    Color c = Color.Lerp(earth, earthLight, n1);
-                    c = Color.Lerp(c, Color.Lerp(grassDark, grassLight, n2), Mathf.Clamp01(n1 * 0.6f));
+                    // Base green grass with variation
+                    Color c = Color.Lerp(grassBase, grassLight, n1);
+                    c = Color.Lerp(c, grassYellow, n2 * 0.35f);
 
-                    // Grain
-                    float grain = (Random.value - 0.5f) * 0.025f;
+                    // Occasional bare earth patches (sparse)
+                    float dirt = Mathf.PerlinNoise(x * 0.008f + 250f, y * 0.008f + 250f);
+                    if (dirt > 0.78f)
+                        c = Color.Lerp(c, earthPatch, (dirt - 0.78f) / 0.22f * 0.5f);
+
+                    // Small pebbles / gravel
+                    if (n3 > 0.78f)
+                        c = Color.Lerp(c, pebble, (n3 - 0.78f) / 0.22f * 0.25f);
+
+                    // Dark puddle stains
+                    float wetness = Mathf.PerlinNoise(x * 0.015f + 350f, y * 0.015f + 350f);
+                    if (wetness > 0.85f)
+                        c = Color.Lerp(c, puddle, (wetness - 0.85f) / 0.15f * 0.3f);
+
+                    // Fine grain
+                    float grain = (Random.value - 0.5f) * 0.022f;
                     c += new Color(grain, grain * 0.8f, grain * 0.5f);
 
                     c.a = 1f;
@@ -594,22 +647,59 @@ namespace GeoCity3D.Visuals
             Texture2D tex = new Texture2D(width, height);
             Color[] pixels = new Color[width * height];
 
-            Color dark = new Color(0.12f, 0.32f, 0.08f);
-            Color mid = new Color(0.20f, 0.45f, 0.14f);
-            Color light = new Color(0.30f, 0.55f, 0.18f);
+            // Rich grass palette
+            Color grassDark = new Color(0.10f, 0.30f, 0.06f);
+            Color grassMid = new Color(0.18f, 0.42f, 0.12f);
+            Color grassLight = new Color(0.28f, 0.52f, 0.16f);
+            Color grassYellow = new Color(0.38f, 0.48f, 0.14f); // Dry patches
+            Color clover = new Color(0.14f, 0.36f, 0.10f);      // Clover patches
+            Color soil = new Color(0.28f, 0.22f, 0.14f);         // Bare soil
+            Color flowerYellow = new Color(0.85f, 0.78f, 0.20f); // Tiny wildflowers
+            Color flowerWhite = new Color(0.90f, 0.88f, 0.82f);  // Daisy specks
 
             for (int y = 0; y < height; y++)
             {
                 for (int x = 0; x < width; x++)
                 {
-                    float n1 = Mathf.PerlinNoise(x * 0.02f + 200f, y * 0.02f + 200f);
-                    float n2 = Mathf.PerlinNoise(x * 0.08f + 300f, y * 0.08f + 300f);
+                    // Large-scale variation (green patches vs slightly dry areas)
+                    float n1 = Mathf.PerlinNoise(x * 0.015f + 200f, y * 0.015f + 200f);
+                    // Medium grass blade direction
+                    float n2 = Mathf.PerlinNoise(x * 0.06f + 300f, y * 0.06f + 300f);
+                    // Fine grass blade texture
+                    float n3 = Mathf.PerlinNoise(x * 0.25f + 400f, y * 0.25f + 400f);
 
-                    Color c = Color.Lerp(dark, mid, n1);
-                    c = Color.Lerp(c, light, n2 * 0.4f);
+                    // Base green with variation
+                    Color c = Color.Lerp(grassDark, grassMid, n1);
+                    c = Color.Lerp(c, grassLight, n2 * 0.5f);
 
-                    float grain = (Random.value - 0.5f) * 0.02f;
-                    c += new Color(grain * 0.3f, grain, grain * 0.2f);
+                    // Dry/yellow patches
+                    float dry = Mathf.PerlinNoise(x * 0.008f + 500f, y * 0.008f + 500f);
+                    if (dry > 0.7f)
+                        c = Color.Lerp(c, grassYellow, (dry - 0.7f) / 0.3f * 0.4f);
+
+                    // Clover patches (darker, denser green)
+                    float cloverNoise = Mathf.PerlinNoise(x * 0.04f + 600f, y * 0.04f + 600f);
+                    if (cloverNoise > 0.65f)
+                        c = Color.Lerp(c, clover, (cloverNoise - 0.65f) / 0.35f * 0.35f);
+
+                    // Worn soil paths
+                    float path = Mathf.PerlinNoise(x * 0.01f + 700f, y * 0.01f + 700f);
+                    if (path > 0.82f)
+                        c = Color.Lerp(c, soil, (path - 0.82f) / 0.18f * 0.6f);
+
+                    // Grass blade highlights
+                    float blade = n3 * 0.08f - 0.04f;
+                    c += new Color(blade * 0.3f, blade, blade * 0.2f);
+
+                    // Tiny wildflower specks
+                    if (Random.value > 0.996f)
+                        c = Color.Lerp(c, flowerYellow, 0.7f);
+                    else if (Random.value > 0.998f)
+                        c = Color.Lerp(c, flowerWhite, 0.6f);
+
+                    // Per-pixel grain for organic feel
+                    float grain = (Random.value - 0.5f) * 0.018f;
+                    c += new Color(grain * 0.4f, grain, grain * 0.3f);
 
                     c.a = 1f;
                     pixels[y * width + x] = c;
@@ -671,7 +761,10 @@ namespace GeoCity3D.Visuals
             Color[] pixels = new Color[width * height];
 
             Color concrete = new Color(0.65f, 0.63f, 0.58f);
-            Color joint = new Color(0.50f, 0.48f, 0.44f);
+            Color concreteWorn = new Color(0.58f, 0.56f, 0.52f);
+            Color joint = new Color(0.45f, 0.43f, 0.40f);
+            Color jointDirt = new Color(0.35f, 0.32f, 0.28f);
+            Color stain = new Color(0.50f, 0.48f, 0.42f);
 
             int slabSize = width / 4;
 
@@ -681,17 +774,39 @@ namespace GeoCity3D.Visuals
                 {
                     int sx = x % slabSize;
                     int sy = y % slabSize;
+                    int slabX = x / slabSize;
+                    int slabY = y / slabSize;
 
-                    float noise = (Random.value - 0.5f) * 0.025f;
-                    Color c = concrete + new Color(noise, noise, noise);
+                    // Per-slab age variation
+                    float slabAge = Mathf.PerlinNoise(slabX * 3.7f + 50f, slabY * 3.7f + 50f);
+                    Color baseC = Color.Lerp(concrete, concreteWorn, slabAge * 0.6f);
 
-                    if (sx < 2 || sy < 2)
+                    // Concrete surface noise
+                    float n1 = Mathf.PerlinNoise(x * 0.15f + 100f, y * 0.15f + 100f);
+                    float grain = (Random.value - 0.5f) * 0.022f;
+                    Color c = baseC + new Color(n1 * 0.03f + grain, n1 * 0.03f + grain, n1 * 0.03f + grain);
+
+                    // Expansion joints (darker with dirt accumulation)
+                    bool isJoint = sx < 2 || sy < 2;
+                    if (isJoint)
                     {
-                        c = joint + new Color(noise * 0.5f, noise * 0.5f, noise * 0.5f);
+                        float dirtAmount = Mathf.PerlinNoise(x * 0.05f + 200f, y * 0.05f + 200f);
+                        c = Color.Lerp(joint, jointDirt, dirtAmount * 0.5f);
                     }
 
-                    float slabVar = Mathf.PerlinNoise((x / slabSize) * 3.1f + 50f, (y / slabSize) * 3.1f + 50f);
-                    c *= 0.95f + slabVar * 0.1f;
+                    // Weathering stains near joints
+                    float distToJointX = Mathf.Min(sx, slabSize - sx) / (float)slabSize;
+                    float distToJointY = Mathf.Min(sy, slabSize - sy) / (float)slabSize;
+                    float jointProximity = 1f - Mathf.Min(distToJointX, distToJointY) * 4f;
+                    if (jointProximity > 0f && !isJoint)
+                    {
+                        float stainStr = jointProximity * 0.12f * Mathf.PerlinNoise(x * 0.08f + 300f, y * 0.08f + 300f);
+                        c = Color.Lerp(c, stain, stainStr);
+                    }
+
+                    // Random dark spots (old gum, small stains)
+                    if (Random.value > 0.998f)
+                        c *= 0.82f;
 
                     c.a = 1f;
                     pixels[y * width + x] = c;

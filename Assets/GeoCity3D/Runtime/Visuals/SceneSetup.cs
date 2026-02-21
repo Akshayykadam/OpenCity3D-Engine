@@ -10,8 +10,104 @@ namespace GeoCity3D.Visuals
     {
         public static void Setup(float cityRadius = 500f)
         {
+            SetupSunLight(cityRadius);
             SetupAmbient();
             TrySetupPostProcessing();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  SUN LIGHT — directional light with shadows
+        // ═══════════════════════════════════════════════════════════
+
+        private static void SetupSunLight(float cityRadius)
+        {
+            // Reuse existing directional light or create one
+            Light sun = null;
+            Light[] allLights = Object.FindObjectsOfType<Light>();
+            foreach (var l in allLights)
+            {
+                if (l.type == LightType.Directional)
+                {
+                    sun = l;
+                    break;
+                }
+            }
+
+            if (sun == null)
+            {
+                GameObject sunGo = new GameObject("Sun");
+                sun = sunGo.AddComponent<Light>();
+                sun.type = LightType.Directional;
+                Debug.Log("SceneSetup: Created directional sun light.");
+            }
+
+            // Warm afternoon sun angle — 50° from horizon for long shadows
+            sun.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+
+            // Warm afternoon color
+            sun.color = new Color(1.0f, 0.96f, 0.88f);
+            sun.intensity = 1.2f;
+
+            // Shadows
+            sun.shadows = LightShadows.Soft;
+            sun.shadowStrength = 0.85f;
+            sun.shadowBias = 0.02f;
+            sun.shadowNormalBias = 0.3f;
+            sun.shadowNearPlane = 0.1f;
+
+            // Shadow distance for city-scale
+            float shadowDist = Mathf.Max(cityRadius * 2f, 500f);
+
+            // ── URP Pipeline Asset configuration ──
+            // URP ignores QualitySettings for shadows — must set on the pipeline asset
+            var pipelineAsset = GraphicsSettings.currentRenderPipeline;
+            if (pipelineAsset != null)
+            {
+                var assetType = pipelineAsset.GetType();
+
+                // Enable main light shadows
+                var castShadowsProp = assetType.GetProperty("supportsMainLightShadows");
+                if (castShadowsProp != null && castShadowsProp.CanWrite)
+                    castShadowsProp.SetValue(pipelineAsset, true);
+
+                // Shadow distance
+                var shadowDistProp = assetType.GetProperty("shadowDistance");
+                if (shadowDistProp != null && shadowDistProp.CanWrite)
+                    shadowDistProp.SetValue(pipelineAsset, shadowDist);
+
+                // Shadow cascades (4 for best quality)
+                var cascadeProp = assetType.GetProperty("shadowCascadeCount");
+                if (cascadeProp != null && cascadeProp.CanWrite)
+                    cascadeProp.SetValue(pipelineAsset, 4);
+
+                // Shadow resolution — try to set to highest (4096)
+                var resField = assetType.GetProperty("mainLightShadowmapResolution");
+                if (resField != null && resField.CanWrite)
+                {
+                    try { resField.SetValue(pipelineAsset, 4096); }
+                    catch { /* resolution enum may differ */ }
+                }
+
+                // Additional lights shadows
+                var addShadowsProp = assetType.GetProperty("supportsAdditionalLightShadows");
+                if (addShadowsProp != null && addShadowsProp.CanWrite)
+                    addShadowsProp.SetValue(pipelineAsset, true);
+
+                Debug.Log($"SceneSetup: URP pipeline configured — shadows ON, distance: {shadowDist}m, 4 cascades");
+
+                #if UNITY_EDITOR
+                UnityEditor.EditorUtility.SetDirty(pipelineAsset);
+                #endif
+            }
+            else
+            {
+                // Built-in pipeline fallback
+                QualitySettings.shadowDistance = shadowDist;
+                QualitySettings.shadowResolution = ShadowResolution.VeryHigh;
+                QualitySettings.shadows = ShadowQuality.All;
+                QualitySettings.shadowCascades = 4;
+                Debug.Log($"SceneSetup: Built-in pipeline — shadows ON, distance: {shadowDist}m");
+            }
         }
 
         private static void SetupAmbient()
@@ -22,11 +118,26 @@ namespace GeoCity3D.Visuals
             RenderSettings.ambientLight = new Color(0.85f, 0.82f, 0.75f);
             RenderSettings.ambientIntensity = 1.5f;
 
-            // Ensure shadows are enabled if in Built-in pipeline
-            QualitySettings.shadows = ShadowQuality.All;
-            QualitySettings.shadowResolution = ShadowResolution.VeryHigh;
-            // Set shadow distance to see the whole city (default is often only 50m)
-            QualitySettings.shadowDistance = 500f; 
+            // ── Procedural Skybox ──
+            Shader skyShader = Shader.Find("Skybox/Procedural");
+            if (skyShader != null)
+            {
+                Material skyMat = new Material(skyShader);
+                skyMat.SetColor("_SkyTint", new Color(0.53f, 0.71f, 1.0f));    // Clean light blue
+                skyMat.SetColor("_GroundColor", new Color(0.85f, 0.85f, 0.80f)); // Light warm horizon
+                skyMat.SetFloat("_Exposure", 1.1f);
+                skyMat.SetFloat("_SunSize", 0.04f);
+                skyMat.SetFloat("_SunSizeConvergence", 8f);
+                skyMat.SetFloat("_AtmosphereThickness", 0.8f);  // Lower = cleaner blue, less yellow
+                RenderSettings.skybox = skyMat;
+                Debug.Log("SceneSetup: Procedural skybox applied.");
+            }
+
+            // ── Distance Fog ──
+            RenderSettings.fog = true;
+            RenderSettings.fogMode = FogMode.ExponentialSquared;
+            RenderSettings.fogColor = new Color(0.72f, 0.75f, 0.82f); // Hazy blue-grey
+            RenderSettings.fogDensity = 0.0012f; // Subtle — visible at ~500m+
         }
 
         // ═══════════════════════════════════════════════════════════
