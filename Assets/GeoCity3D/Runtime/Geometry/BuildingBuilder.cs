@@ -161,10 +161,10 @@ namespace GeoCity3D.Geometry
 
             mf.sharedMesh = mesh;
 
-            // Tight-fitting collider
-            MeshCollider col = go.AddComponent<MeshCollider>();
-            col.sharedMesh = mesh;
-            col.convex = false;
+            // Tight-fitting collider (DISABLED by default for massive city performance)
+            // MeshCollider col = go.AddComponent<MeshCollider>();
+            // col.sharedMesh = mesh;
+            // col.convex = false;
 
             return go;
         }

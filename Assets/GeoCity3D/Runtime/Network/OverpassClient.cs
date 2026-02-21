@@ -83,7 +83,8 @@ namespace GeoCity3D.Network
         /// </summary>
         private string BuildQuery(double lat, double lon, double radius)
         {
-            return $"[out:xml][timeout:55];" +
+            // Increased timeout and memory limit for massive 3000m cities
+            return $"[out:xml][timeout:180][maxsize:1073741824];" +
                    $"(" +
                    // Buildings & roads
                    $"way[\"building\"](around:{radius},{lat},{lon});" +
@@ -113,14 +114,21 @@ namespace GeoCity3D.Network
 
 
         /// <summary>
-        /// Fallback: even more focused query (buildings + roads only) if the full query times out.
+        /// Fallback: even more focused query (buildings, roads, basic water/parks) if the full query times out.
+        /// Omits slow regex filtering to speed up the Overpass DB search.
         /// </summary>
         private string BuildFocusedQuery(double lat, double lon, double radius)
         {
-            return $"[out:xml][timeout:90];" +
+            return $"[out:xml][timeout:180][maxsize:1073741824];" +
                    $"(" +
                    $"way[\"building\"](around:{radius},{lat},{lon});" +
                    $"way[\"highway\"](around:{radius},{lat},{lon});" +
+                   // Basic water and parks without slow regex operators
+                   $"way[\"water\"](around:{radius},{lat},{lon});" +
+                   $"relation[\"water\"](around:{radius},{lat},{lon});" +
+                   $"way[\"natural\"=\"water\"](around:{radius},{lat},{lon});" +
+                   $"relation[\"natural\"=\"water\"](around:{radius},{lat},{lon});" +
+                   $"way[\"leisure\"=\"park\"](around:{radius},{lat},{lon});" +
                    $");" +
                    $"out body;>;out skel qt;";
         }

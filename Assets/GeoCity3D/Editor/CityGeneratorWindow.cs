@@ -51,6 +51,7 @@ namespace GeoCity3D.Editor
                     SimpleEditorCoroutine.Start(GenerateCity());
                 }
             }
+
         }
 
         // ── Solid color material — renders BOTH sides so geometry never looks hollow ──
@@ -202,9 +203,12 @@ namespace GeoCity3D.Editor
                 }
             }
 
-            // Fallback materials
-            Material buildingMat = wallPool.Count > 0 ? wallPool[0] : CreateSolidMaterial(shader, new Color(0.82f, 0.82f, 0.82f), 0.15f);
-            Material roofMat = roofPool.Count > 0 ? roofPool[0] : CreateSolidMaterial(shader, new Color(0.55f, 0.53f, 0.50f), 0.1f);
+            // Always create at least one fallback material for buildings/roofs
+            Material buildingMat = CreateSolidMaterial(shader, new Color(0.82f, 0.82f, 0.82f), 0.15f);
+            Material roofMat = CreateSolidMaterial(shader, new Color(0.55f, 0.53f, 0.50f), 0.1f);
+            
+            if (wallPool.Count > 0) buildingMat = wallPool[0];
+            if (roofPool.Count > 0) roofMat = roofPool[0];
 
             // Roads
             Texture2D roadNormalMap = TextureGenerator.CreateAsphaltNormalMap();
@@ -547,8 +551,22 @@ namespace GeoCity3D.Editor
             // 11. Scene atmosphere (lighting, fog, post-processing)
             SceneSetup.Setup(_radius);
 
+            // 12. Enable Static Batching for all generated meshes
+            SetStaticRecursive(cityRoot);
+
             Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}, StreetLights: {streetLightCount}");
             _isGenerating = false;
+        }
+
+        private void SetStaticRecursive(GameObject go)
+        {
+            if (go == null) return;
+            // Mark as batching static to allow Unity to combine meshes for massive objects like 3000m cities
+            GameObjectUtility.SetStaticEditorFlags(go, StaticEditorFlags.BatchingStatic | StaticEditorFlags.ReflectionProbeStatic | StaticEditorFlags.OccluderStatic | StaticEditorFlags.OccludeeStatic);
+            foreach (Transform child in go.transform)
+            {
+                SetStaticRecursive(child.gameObject);
+            }
         }
 
         private bool IsInsideAnyBuilding(Vector3 pos, List<Bounds> buildingBounds)

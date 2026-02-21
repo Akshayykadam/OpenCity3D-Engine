@@ -66,27 +66,57 @@ namespace GeoCity3D.Geometry
             float sizeX = Mathf.Max(maxX - minX, 0.01f);
             float sizeZ = Mathf.Max(maxZ - minZ, 0.01f);
 
+            // Clean duplicate points to prevent Triangulation failure
+            List<Vector3> cleanPoly = new List<Vector3>();
+            foreach (var p in polygon)
+            {
+                if (cleanPoly.Count == 0 || Vector3.Distance(cleanPoly[cleanPoly.Count - 1], p) > 0.1f)
+                {
+                    cleanPoly.Add(p);
+                }
+            }
+            if (cleanPoly.Count >= 3 && Vector3.Distance(cleanPoly[0], cleanPoly[cleanPoly.Count - 1]) < 0.1f)
+                cleanPoly.RemoveAt(cleanPoly.Count - 1);
+
             // ── Top surface ──
             int baseIdx = verts.Count;
-            for (int i = 0; i < polygon.Count; i++)
+            for (int i = 0; i < cleanPoly.Count; i++)
             {
-                verts.Add(polygon[i]);
+                verts.Add(cleanPoly[i]);
                 uvs.Add(new Vector2(
-                    (polygon[i].x - minX) / sizeX,
-                    (polygon[i].z - minZ) / sizeZ));
+                    (cleanPoly[i].x - minX) / sizeX,
+                    (cleanPoly[i].z - minZ) / sizeZ));
             }
 
-            List<int> capTris = GeometryUtils.Triangulate(polygon);
-            for (int i = 0; i < capTris.Count; i++)
-                tris.Add(baseIdx + capTris[i]);
+            List<int> capTris = GeometryUtils.Triangulate(cleanPoly);
+            if (capTris == null || capTris.Count < 3)
+            {
+                Debug.LogWarning($"AreaBuilder: Triangulation failed for {prefix}_{id}. The geometry is likely self-intersecting or too complex. Falling back to convex hull.");
+                // Fallback to convex hull if Triangulator fails (better than an invisible lake)
+                cleanPoly = GeometryUtils.GetConvexHull(cleanPoly);
+                verts.RemoveRange(baseIdx, verts.Count - baseIdx);
+                uvs.RemoveRange(baseIdx, uvs.Count - baseIdx);
+                for (int i = 0; i < cleanPoly.Count; i++)
+                {
+                    verts.Add(cleanPoly[i]);
+                    uvs.Add(new Vector2((cleanPoly[i].x - minX) / sizeX, (cleanPoly[i].z - minZ) / sizeZ));
+                }
+                capTris = GeometryUtils.Triangulate(cleanPoly);
+            }
+
+            if (capTris != null)
+            {
+                for (int i = 0; i < capTris.Count; i++)
+                    tris.Add(baseIdx + capTris[i]);
+            }
 
             // ── Side walls (edge thickness) ──
             float bottomY = surfaceY - EDGE_DEPTH;
-            for (int i = 0; i < polygon.Count; i++)
+            for (int i = 0; i < cleanPoly.Count; i++)
             {
-                int next = (i + 1) % polygon.Count;
-                Vector3 p1 = polygon[i];
-                Vector3 p2 = polygon[next];
+                int next = (i + 1) % cleanPoly.Count;
+                Vector3 p1 = cleanPoly[i];
+                Vector3 p2 = cleanPoly[next];
 
                 int bi = verts.Count;
                 verts.Add(new Vector3(p1.x, surfaceY, p1.z));
