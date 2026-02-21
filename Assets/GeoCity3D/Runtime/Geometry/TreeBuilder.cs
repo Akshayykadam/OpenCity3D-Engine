@@ -22,7 +22,41 @@ namespace GeoCity3D.Geometry
         private static readonly Color TrunkColor = new Color(0.28f, 0.20f, 0.12f);
         private static readonly Color BarkDark = new Color(0.18f, 0.13f, 0.08f);
 
+        // ── SHARED MATERIAL POOL (critical for batching!) ──
+        // Without this, every tree gets a unique Material instance and CityCombiner
+        // can never group them. This single change eliminates ~20,000 draw calls.
+        private static Material _sharedTrunkMat;
+        private static Material[] _sharedCanopyMats;
+
         private enum TreeShape { Round, Conical, Spreading }
+
+        private static void EnsureMaterialPool(Shader shader)
+        {
+            if (_sharedTrunkMat != null) return;
+
+            _sharedTrunkMat = new Material(shader);
+            _sharedTrunkMat.color = TrunkColor;
+            if (_sharedTrunkMat.HasProperty("_Smoothness")) _sharedTrunkMat.SetFloat("_Smoothness", 0.1f);
+            if (_sharedTrunkMat.HasProperty("_Glossiness")) _sharedTrunkMat.SetFloat("_Glossiness", 0.1f);
+
+            _sharedCanopyMats = new Material[CanopyColors.Length];
+            for (int i = 0; i < CanopyColors.Length; i++)
+            {
+                _sharedCanopyMats[i] = new Material(shader);
+                _sharedCanopyMats[i].color = CanopyColors[i];
+                if (_sharedCanopyMats[i].HasProperty("_Smoothness")) _sharedCanopyMats[i].SetFloat("_Smoothness", 0.0f);
+                if (_sharedCanopyMats[i].HasProperty("_Glossiness")) _sharedCanopyMats[i].SetFloat("_Glossiness", 0.0f);
+            }
+        }
+
+        /// <summary>
+        /// Call before generating a new city to refresh the material pool.
+        /// </summary>
+        public static void ResetMaterialPool()
+        {
+            _sharedTrunkMat = null;
+            _sharedCanopyMats = null;
+        }
 
         /// <summary>
         /// Build a single tree with random shape variant.
@@ -41,24 +75,14 @@ namespace GeoCity3D.Geometry
 
         private static GameObject Build(Vector3 position, Shader shader, float scale, TreeShape shape)
         {
+            EnsureMaterialPool(shader);
+
             GameObject tree = new GameObject("Tree");
             tree.transform.position = position;
 
-            Color canopyColor = CanopyColors[Random.Range(0, CanopyColors.Length)];
-
-            // Bark material with slight variation
-            Material trunkMat = new Material(shader);
-            trunkMat.color = Color.Lerp(TrunkColor, BarkDark, Random.Range(0f, 0.4f));
-            if (trunkMat.HasProperty("_Smoothness")) trunkMat.SetFloat("_Smoothness", 0.1f);
-            if (trunkMat.HasProperty("_Glossiness")) trunkMat.SetFloat("_Glossiness", 0.1f);
-
-            // Canopy material with slight color variation
-            Material canopyMat = new Material(shader);
-            canopyColor *= Random.Range(0.85f, 1.15f);
-            canopyColor.a = 1f;
-            canopyMat.color = canopyColor;
-            if (canopyMat.HasProperty("_Smoothness")) canopyMat.SetFloat("_Smoothness", 0.0f);
-            if (canopyMat.HasProperty("_Glossiness")) canopyMat.SetFloat("_Glossiness", 0.0f);
+            // Pick from the shared pool — all trees with same canopy color share the SAME material instance
+            Material trunkMat = _sharedTrunkMat;
+            Material canopyMat = _sharedCanopyMats[Random.Range(0, _sharedCanopyMats.Length)];
 
             switch (shape)
             {
@@ -92,7 +116,7 @@ namespace GeoCity3D.Geometry
             trunk.transform.SetParent(tree.transform, false);
 
             // Main canopy (slightly squished sphere)
-            GameObject canopy = CreateSphere("Canopy", canopyRadius, 10, 8, canopyMat);
+            GameObject canopy = CreateSphere("Canopy", canopyRadius, 6, 5, canopyMat);
             canopy.transform.SetParent(tree.transform, false);
             canopy.transform.localPosition = new Vector3(0f, trunkHeight + canopyRadius * 0.5f, 0f);
             canopy.transform.localScale = new Vector3(1f, 0.85f, 1f); // Slightly flat
@@ -101,7 +125,7 @@ namespace GeoCity3D.Geometry
             if (Random.value > 0.4f)
             {
                 float r2 = canopyRadius * Random.Range(0.5f, 0.7f);
-                GameObject canopy2 = CreateSphere("Canopy2", r2, 8, 6, canopyMat);
+                GameObject canopy2 = CreateSphere("Canopy2", r2, 5, 4, canopyMat);
                 canopy2.transform.SetParent(tree.transform, false);
                 float offsetX = Random.Range(-canopyRadius * 0.3f, canopyRadius * 0.3f);
                 float offsetZ = Random.Range(-canopyRadius * 0.3f, canopyRadius * 0.3f);
@@ -123,7 +147,7 @@ namespace GeoCity3D.Geometry
 
             // Trunk (thin, straight)
             GameObject trunk = CreateTaperedCylinder("Trunk", trunkRadius, trunkRadius * 0.8f,
-                trunkHeight, 6, trunkMat);
+                trunkHeight, 4, trunkMat);
             trunk.transform.SetParent(tree.transform, false);
 
             // Cone canopy (2-3 stacked cones for layered look)
@@ -134,7 +158,7 @@ namespace GeoCity3D.Geometry
                 float layerRadius = coneRadius * (1f - (float)i / layers * 0.4f);
                 float layerHeight = coneHeight / layers * 1.2f;
 
-                GameObject cone = CreateCone("Cone_" + i, layerRadius, layerHeight, 8, canopyMat);
+                GameObject cone = CreateCone("Cone_" + i, layerRadius, layerHeight, 5, canopyMat);
                 cone.transform.SetParent(tree.transform, false);
                 cone.transform.localPosition = new Vector3(0f, layerBase, 0f);
             }
@@ -154,11 +178,11 @@ namespace GeoCity3D.Geometry
 
             // Thick trunk
             GameObject trunk = CreateTaperedCylinder("Trunk", trunkRadius * 1.3f, trunkRadius * 0.7f,
-                trunkHeight, 8, trunkMat);
+                trunkHeight, 6, trunkMat);
             trunk.transform.SetParent(tree.transform, false);
 
             // Wide, flat ellipsoid canopy
-            GameObject canopy = CreateSphere("Canopy", 1f, 10, 8, canopyMat);
+            GameObject canopy = CreateSphere("Canopy", 1f, 6, 5, canopyMat);
             canopy.transform.SetParent(tree.transform, false);
             canopy.transform.localPosition = new Vector3(0f, trunkHeight + canopyHeight * 0.3f, 0f);
             canopy.transform.localScale = new Vector3(canopyRadiusX, canopyHeight, canopyRadiusZ);
@@ -203,8 +227,8 @@ namespace GeoCity3D.Geometry
             GameObject go = new GameObject(name);
             MeshFilter mf = go.AddComponent<MeshFilter>();
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.material = mat;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+            mr.sharedMaterial = mat;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
             Mesh mesh = new Mesh();
             List<Vector3> verts = new List<Vector3>();
@@ -254,8 +278,8 @@ namespace GeoCity3D.Geometry
             GameObject go = new GameObject(name);
             MeshFilter mf = go.AddComponent<MeshFilter>();
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.material = mat;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+            mr.sharedMaterial = mat;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
             Mesh mesh = new Mesh();
             List<Vector3> verts = new List<Vector3>();
@@ -300,8 +324,8 @@ namespace GeoCity3D.Geometry
             GameObject go = new GameObject(name);
             MeshFilter mf = go.AddComponent<MeshFilter>();
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.material = mat;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+            mr.sharedMaterial = mat;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
             Mesh mesh = new Mesh();
             List<Vector3> verts = new List<Vector3>();

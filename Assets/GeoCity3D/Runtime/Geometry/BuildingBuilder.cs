@@ -62,7 +62,7 @@ namespace GeoCity3D.Geometry
             GameObject go = new GameObject($"Building_{id}");
             MeshFilter mf = go.AddComponent<MeshFilter>();
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.materials = new Material[] { wallMat, roofMat };
+            mr.sharedMaterials = new Material[] { wallMat, roofMat };
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
             mr.receiveShadows = true;
 

@@ -14,8 +14,8 @@ namespace GeoCity3D.Editor
 {
     public class CityGeneratorWindow : EditorWindow
     {
-        private double _latitude = 50.10152436;
-        private double _longitude = 8.66424154;
+        private double _latitude = 40.78266833085562;
+        private double _longitude = -73.9655190496627;
         private float _radius = 1000f;
         
         private CityController _cityController;
@@ -551,7 +551,18 @@ namespace GeoCity3D.Editor
             // 11. Scene atmosphere (lighting, fog, post-processing)
             SceneSetup.Setup(_radius);
 
-            // 12. Enable Static Batching for all generated meshes
+            // 12. Optimization: Combine all meshes by material to fix extreme lag
+            // This crushes 30,000+ separate draw calls down to ~10.
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(buildingsParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(roadsParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(intersectionsParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(parksParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(waterParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(beachesParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(treesParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(lightsParent);
+
+            // 13. Enable Static Batching for anything remaining (like loose items)
             SetStaticRecursive(cityRoot);
 
             Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}, StreetLights: {streetLightCount}");

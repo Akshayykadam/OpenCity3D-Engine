@@ -11,12 +11,47 @@ namespace GeoCity3D.Geometry
         private static readonly Color PoleColor = new Color(0.25f, 0.25f, 0.27f);   // Dark metal gray
         private static readonly Color LampColor = new Color(0.95f, 0.90f, 0.65f);   // Warm lamp glow
 
+        // ── SHARED MATERIAL POOL (critical for batching!) ──
+        private static Material _sharedPoleMat;
+        private static Material _sharedLampMat;
+
+        private static void EnsureMaterialPool(Shader shader)
+        {
+            if (_sharedPoleMat != null) return;
+
+            _sharedPoleMat = new Material(shader);
+            _sharedPoleMat.color = PoleColor;
+            if (_sharedPoleMat.HasProperty("_Smoothness")) _sharedPoleMat.SetFloat("_Smoothness", 0.5f);
+            if (_sharedPoleMat.HasProperty("_Glossiness")) _sharedPoleMat.SetFloat("_Glossiness", 0.5f);
+
+            _sharedLampMat = new Material(shader);
+            _sharedLampMat.color = LampColor;
+            if (_sharedLampMat.HasProperty("_Smoothness")) _sharedLampMat.SetFloat("_Smoothness", 0.8f);
+            if (_sharedLampMat.HasProperty("_Glossiness")) _sharedLampMat.SetFloat("_Glossiness", 0.8f);
+            if (_sharedLampMat.HasProperty("_EmissionColor"))
+            {
+                _sharedLampMat.EnableKeyword("_EMISSION");
+                _sharedLampMat.SetColor("_EmissionColor", LampColor * 0.5f);
+            }
+        }
+
+        /// <summary>
+        /// Call before generating a new city to refresh the material pool.
+        /// </summary>
+        public static void ResetMaterialPool()
+        {
+            _sharedPoleMat = null;
+            _sharedLampMat = null;
+        }
+
         /// <summary>
         /// Place street lights along a road path at regular intervals, alternating sides.
         /// </summary>
         public static List<GameObject> PlaceStreetLights(List<Vector3> roadPath, Shader shader,
             float spacing = 25f)
         {
+            EnsureMaterialPool(shader);
+
             List<GameObject> lights = new List<GameObject>();
             if (roadPath == null || roadPath.Count < 2) return lights;
 
@@ -39,7 +74,7 @@ namespace GeoCity3D.Geometry
                     Vector3 lightPos = point + right * offset;
                     lightPos.y = 0f;
 
-                    GameObject light = BuildStreetLight(lightPos, dir, shader);
+                    GameObject light = BuildStreetLight(lightPos, dir);
                     lights.Add(light);
 
                     rightSide = !rightSide;
@@ -55,37 +90,24 @@ namespace GeoCity3D.Geometry
         /// <summary>
         /// Build a single street light: pole + arm + lamp housing.
         /// </summary>
-        private static GameObject BuildStreetLight(Vector3 position, Vector3 roadDir, Shader shader)
+        private static GameObject BuildStreetLight(Vector3 position, Vector3 roadDir)
         {
             GameObject root = new GameObject("StreetLight");
             root.transform.position = position;
 
-            Material poleMat = new Material(shader);
-            poleMat.color = PoleColor;
-            if (poleMat.HasProperty("_Smoothness")) poleMat.SetFloat("_Smoothness", 0.5f);
-            if (poleMat.HasProperty("_Glossiness")) poleMat.SetFloat("_Glossiness", 0.5f);
-
-            Material lampMat = new Material(shader);
-            lampMat.color = LampColor;
-            if (lampMat.HasProperty("_Smoothness")) lampMat.SetFloat("_Smoothness", 0.8f);
-            if (lampMat.HasProperty("_Glossiness")) lampMat.SetFloat("_Glossiness", 0.8f);
-            // Make lamp emissive
-            if (lampMat.HasProperty("_EmissionColor"))
-            {
-                lampMat.EnableKeyword("_EMISSION");
-                lampMat.SetColor("_EmissionColor", LampColor * 0.5f);
-            }
+            Material poleMat = _sharedPoleMat;
+            Material lampMat = _sharedLampMat;
 
             // ── Pole (vertical cylinder) ──
             float poleHeight = Random.Range(5.5f, 7f);
             float poleRadius = 0.08f;
-            GameObject pole = CreateCylinder("Pole", poleRadius, poleHeight, 6, poleMat);
+            GameObject pole = CreateCylinder("Pole", poleRadius, poleHeight, 4, poleMat);
             pole.transform.SetParent(root.transform, false);
 
             // ── Arm (angled outward toward road) ──
             float armLength = 1.2f;
             float armRadius = 0.05f;
-            GameObject arm = CreateCylinder("Arm", armRadius, armLength, 4, poleMat);
+            GameObject arm = CreateCylinder("Arm", armRadius, armLength, 3, poleMat);
             arm.transform.SetParent(root.transform, false);
             arm.transform.localPosition = new Vector3(0, poleHeight, 0);
             // Angle the arm 30° down toward the road
@@ -111,8 +133,8 @@ namespace GeoCity3D.Geometry
             GameObject go = new GameObject(name);
             MeshFilter mf = go.AddComponent<MeshFilter>();
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.material = mat;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+            mr.sharedMaterial = mat;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
             Mesh mesh = new Mesh();
             List<Vector3> verts = new List<Vector3>();
@@ -148,7 +170,7 @@ namespace GeoCity3D.Geometry
             GameObject go = new GameObject(name);
             MeshFilter mf = go.AddComponent<MeshFilter>();
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.material = mat;
+            mr.sharedMaterial = mat;
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
             float hx = size.x * 0.5f, hy = size.y * 0.5f, hz = size.z * 0.5f;

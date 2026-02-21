@@ -238,7 +238,7 @@ namespace GeoCity3D.Geometry
             GameObject go = new GameObject(name);
             MeshFilter mf = go.AddComponent<MeshFilter>();
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.material = material;
+            mr.sharedMaterial = material;
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
             mr.receiveShadows = true;
 
