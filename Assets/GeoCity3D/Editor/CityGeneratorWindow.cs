@@ -14,8 +14,8 @@ namespace GeoCity3D.Editor
 {
     public class CityGeneratorWindow : EditorWindow
     {
-        private double _latitude = 40.78266833085562;
-        private double _longitude = -73.9655190496627;
+        private double _latitude = 40.65370764935582;
+        private double _longitude = -73.98882885896016;
         private float _radius = 1000f;
         
         private CityController _cityController;
@@ -429,7 +429,7 @@ namespace GeoCity3D.Editor
                 }
                 else if (IsWaterArea(way))
                 {
-                    GameObject water = AreaBuilder.Build(way, data, waterMat, shifter, 0.01f, "Water");
+                    GameObject water = AreaBuilder.Build(way, data, waterMat, shifter, -0.15f, "Water");
                     if (water != null)
                     {
                         water.transform.SetParent(waterParent.transform);
@@ -791,7 +791,7 @@ namespace GeoCity3D.Editor
             GameObject go = new GameObject(name);
             MeshFilter mf = go.AddComponent<MeshFilter>();
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.material = material;
+            mr.sharedMaterial = material;
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             mr.receiveShadows = true;
 

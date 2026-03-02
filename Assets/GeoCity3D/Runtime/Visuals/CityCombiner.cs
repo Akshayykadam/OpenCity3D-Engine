@@ -19,6 +19,10 @@ namespace GeoCity3D.Visuals
             // 1. Group all mesh COMBINERS by their exact shared material across all submeshes
             Dictionary<Material, List<CombineInstance>> materialGroups = new Dictionary<Material, List<CombineInstance>>();
 
+            // Collect all components we'll destroy AFTER collecting mesh data
+            List<MeshRenderer> renderersToDestroy = new List<MeshRenderer>();
+            List<MeshFilter> filtersToDestroy = new List<MeshFilter>();
+
             foreach (var mf in meshFilters)
             {
                 MeshRenderer mr = mf.GetComponent<MeshRenderer>();
@@ -46,11 +50,14 @@ namespace GeoCity3D.Visuals
                     materialGroups[mat].Add(ci);
                 }
 
-                // Destroy the original mesh renderer and filter so they don't clog up 
-                // Unity's internal Static Batching arrays later in the generation process.
-                GameObject.DestroyImmediate(mr);
-                GameObject.DestroyImmediate(mf);
+                // Queue for destruction AFTER all data is collected
+                renderersToDestroy.Add(mr);
+                filtersToDestroy.Add(mf);
             }
+
+            // Destroy originals only AFTER all mesh data is safely captured in CombineInstances
+            foreach (var mr in renderersToDestroy) GameObject.DestroyImmediate(mr);
+            foreach (var mf in filtersToDestroy) GameObject.DestroyImmediate(mf);
 
             // 2. For each material group, combine meshes together
             int totalCombined = 0;
