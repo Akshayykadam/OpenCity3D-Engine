@@ -263,9 +263,15 @@ namespace GeoCity3D.Editor
             treesParent.transform.SetParent(cityRoot.transform);
             GameObject beachesParent = new GameObject("Beaches");
             beachesParent.transform.SetParent(cityRoot.transform);
+            GameObject vehiclesParent = new GameObject("Vehicles");
+            vehiclesParent.transform.SetParent(cityRoot.transform);
+            GameObject propsParent = new GameObject("StreetProps");
+            propsParent.transform.SetParent(cityRoot.transform);
+            GameObject signalsParent = new GameObject("TrafficSignals");
+            signalsParent.transform.SetParent(cityRoot.transform);
 
             int buildingCount = 0, roadCount = 0, parkCount = 0, waterCount = 0, beachCount = 0, treeCount = 0;
-            int intersectionCount = 0;
+            int intersectionCount = 0, vehicleCount = 0, propCount = 0, signalCount = 0;
 
             // Clear intersection data from previous generation
             RoadBuilder.ClearIntersectionData();
@@ -284,17 +290,17 @@ namespace GeoCity3D.Editor
                         && _cityController.BuildingPrefabs != null
                         && _cityController.BuildingPrefabs.Length > 0)
                     {
-                        // ── PREFAB MODE ──
+                        // ── PREFAB MODE — native size, road-aligned placement ──
                         Vector3 center = Vector3.zero;
                         int nodeCount = 0;
-                        List<Vector3> pts = new List<Vector3>();
+                        List<Vector3> footprintPts = new List<Vector3>();
                         foreach (long nodeId in way.NodeIds)
                         {
                             if (data.Nodes.TryGetValue(nodeId, out OsmNode node))
                             {
-                                Vector3 pos = shifter.GetLocalPosition(node.Latitude, node.Longitude);
-                                pts.Add(pos);
-                                center += pos;
+                                Vector3 p = shifter.GetLocalPosition(node.Latitude, node.Longitude);
+                                footprintPts.Add(p);
+                                center += p;
                                 nodeCount++;
                             }
                         }
@@ -304,47 +310,67 @@ namespace GeoCity3D.Editor
                             center /= nodeCount;
                             center.y = 0f;
 
-                            float minX = float.MaxValue, maxX = float.MinValue;
-                            float minZ = float.MaxValue, maxZ = float.MinValue;
-                            foreach (var p in pts)
+                            // Find the longest edge of the footprint polygon —
+                            // this typically runs parallel to the road
+                            float yAngle = 0f;
+                            if (footprintPts.Count >= 2)
                             {
-                                if (p.x < minX) minX = p.x;
-                                if (p.x > maxX) maxX = p.x;
-                                if (p.z < minZ) minZ = p.z;
-                                if (p.z > maxZ) maxZ = p.z;
+                                float longestEdge = 0f;
+                                Vector3 longestDir = Vector3.forward;
+                                for (int e = 0; e < footprintPts.Count - 1; e++)
+                                {
+                                    float edgeLen = Vector3.Distance(footprintPts[e], footprintPts[e + 1]);
+                                    if (edgeLen > longestEdge)
+                                    {
+                                        longestEdge = edgeLen;
+                                        longestDir = (footprintPts[e + 1] - footprintPts[e]).normalized;
+                                    }
+                                }
+                                yAngle = Mathf.Atan2(longestDir.x, longestDir.z) * Mathf.Rad2Deg;
                             }
-                            float footW = maxX - minX;
-                            float footD = maxZ - minZ;
-                            if (footW < 3f || footD < 3f) continue;
 
                             GameObject prefab = _cityController.BuildingPrefabs[Random.Range(0, _cityController.BuildingPrefabs.Length)];
-                            float yAngle = Random.Range(0, 4) * 90f;
-                            building = Instantiate(prefab, center, Quaternion.Euler(-90f, yAngle, 0f));
-                            building.name = $"Model_Building_{way.Id}";
-                            building.transform.localScale = Vector3.one * 100f;
+                            building = Instantiate(prefab, center, Quaternion.Euler(0f, yAngle, 0f));
+                            building.name = $"Building_{way.Id}";
 
+                            // Ground the building: shift so bottom sits at y=0
                             Renderer[] mrs = building.GetComponentsInChildren<Renderer>();
                             if (mrs.Length > 0)
                             {
-                                Bounds mb = mrs[0].bounds;
+                                Bounds fb = mrs[0].bounds;
                                 for (int i = 1; i < mrs.Length; i++)
-                                    mb.Encapsulate(mrs[i].bounds);
+                                    fb.Encapsulate(mrs[i].bounds);
+                                Vector3 pos = building.transform.position;
+                                pos.y -= fb.min.y;
+                                building.transform.position = pos;
 
-                                float sX = (mb.size.x > 0.1f) ? (footW / mb.size.x) : 1f;
-                                float sZ = (mb.size.z > 0.1f) ? (footD / mb.size.z) : 1f;
-                                float fitScale = Mathf.Clamp(Mathf.Min(sX, sZ), 0.3f, 1.5f);
-                                building.transform.localScale = Vector3.one * 100f * fitScale;
-
-                                // Plant on ground: measure final bounds, shift so bottom = y:0
+                                // Recalculate bounds after grounding
                                 mrs = building.GetComponentsInChildren<Renderer>();
-                                if (mrs.Length > 0)
+                                Bounds newBounds = mrs[0].bounds;
+                                for (int i = 1; i < mrs.Length; i++)
+                                    newBounds.Encapsulate(mrs[i].bounds);
+
+                                // Check overlap with already-placed buildings
+                                // Only reject if the core of the building heavily overlaps
+                                bool overlaps = false;
+                                Bounds testBounds = newBounds;
+                                // Shrink by 60% of size so only heavy overlaps are rejected
+                                float shrinkX = newBounds.size.x * 0.6f;
+                                float shrinkZ = newBounds.size.z * 0.6f;
+                                testBounds.Expand(new Vector3(-shrinkX, 0f, -shrinkZ));
+                                foreach (var existingBounds in buildingBounds)
                                 {
-                                    Bounds fb = mrs[0].bounds;
-                                    for (int i = 1; i < mrs.Length; i++)
-                                        fb.Encapsulate(mrs[i].bounds);
-                                    Vector3 pos = building.transform.position;
-                                    pos.y -= fb.min.y;
-                                    building.transform.position = pos;
+                                    if (testBounds.Intersects(existingBounds))
+                                    {
+                                        overlaps = true;
+                                        break;
+                                    }
+                                }
+
+                                if (overlaps)
+                                {
+                                    DestroyImmediate(building);
+                                    building = null;
                                 }
                             }
                         }
@@ -454,20 +480,77 @@ namespace GeoCity3D.Editor
             intersectionCount = GenerateIntersections(intersectionsParent.transform,
                 intersectionMat);
 
-            // 8. Dense trees in parks (like the reference images)
+            // Collect intersection centers for traffic signal placement
+            List<Vector3> intersectionCenters = new List<Vector3>();
+            var roadEndsForSignals = RoadBuilder.GetRoadEnds();
+            {
+                float clusterR = 15f;
+                bool[] usedSignal = new bool[roadEndsForSignals.Count];
+                for (int i = 0; i < roadEndsForSignals.Count; i++)
+                {
+                    if (usedSignal[i]) continue;
+                    List<int> cluster = new List<int> { i };
+                    usedSignal[i] = true;
+                    for (int j = i + 1; j < roadEndsForSignals.Count; j++)
+                    {
+                        if (usedSignal[j]) continue;
+                        if (Vector3.Distance(roadEndsForSignals[i].Position, roadEndsForSignals[j].Position) < clusterR)
+                        {
+                            cluster.Add(j);
+                            usedSignal[j] = true;
+                        }
+                    }
+                    if (cluster.Count >= 2)
+                    {
+                        Vector3 center = Vector3.zero;
+                        foreach (int idx in cluster) center += roadEndsForSignals[idx].Position;
+                        center /= cluster.Count;
+                        center.y = 0f;
+                        intersectionCenters.Add(center);
+                    }
+                }
+            }
+
+            // ── Determine if we have SimplePoly prefabs ──
+            bool hasTreePrefabs = _cityController.TreePrefabs != null && _cityController.TreePrefabs.Length > 0;
+            bool hasBushPrefabs = _cityController.BushPrefabs != null && _cityController.BushPrefabs.Length > 0;
+            bool hasRockPrefabs = _cityController.RockPrefabs != null && _cityController.RockPrefabs.Length > 0;
+            bool hasLightPrefabs = _cityController.StreetLightPrefabs != null && _cityController.StreetLightPrefabs.Length > 0;
+            bool hasSignalPrefabs = _cityController.TrafficSignalPrefabs != null && _cityController.TrafficSignalPrefabs.Length > 0;
+            bool hasPropPrefabs = _cityController.StreetPropPrefabs != null && _cityController.StreetPropPrefabs.Length > 0;
+            bool hasVehiclePrefabs = _cityController.VehiclePrefabs != null && _cityController.VehiclePrefabs.Length > 0;
+
+            // 8. Dense trees in parks
             for (int i = 0; i < parkCenters.Count; i++)
             {
                 float parkRadius = Mathf.Max(parkSizes[i] * 0.85f, 8f);
                 int treeCountInPark = Mathf.Clamp(Mathf.RoundToInt(parkRadius * parkRadius * 0.04f), 8, 80);
-                List<GameObject> parkTrees = TreeBuilder.ScatterTrees(parkCenters[i], parkRadius, treeCountInPark, shader);
-                foreach (var t in parkTrees)
+
+                if (hasTreePrefabs)
                 {
-                    t.transform.SetParent(treesParent.transform);
-                    treeCount++;
+                    // Use prefab-based park nature with trees, bushes, and rocks
+                    List<GameObject> parkNature = TreeBuilder.ScatterParkNature(
+                        parkCenters[i], parkRadius, treeCountInPark,
+                        _cityController.TreePrefabs, _cityController.BushPrefabs, _cityController.RockPrefabs);
+                    foreach (var obj in parkNature)
+                    {
+                        obj.transform.SetParent(treesParent.transform);
+                        treeCount++;
+                    }
+                }
+                else
+                {
+                    // Fallback: procedural trees
+                    List<GameObject> parkTrees = TreeBuilder.ScatterTrees(parkCenters[i], parkRadius, treeCountInPark, shader);
+                    foreach (var t in parkTrees)
+                    {
+                        t.transform.SetParent(treesParent.transform);
+                        treeCount++;
+                    }
                 }
             }
 
-            // 8. Street trees along roads
+            // 9. Street trees along roads
             foreach (var way in data.Ways)
             {
                 if (!way.HasTag("highway")) continue;
@@ -502,19 +585,27 @@ namespace GeoCity3D.Editor
 
                         if (!IsInsideAnyBuilding(treePos, buildingBounds))
                         {
-                            GameObject tree = TreeBuilder.Build(treePos, shader, Random.Range(0.5f, 1.0f));
-                            tree.transform.SetParent(treesParent.transform);
-                            treeCount++;
+                            GameObject tree;
+                            if (hasTreePrefabs)
+                                tree = TreeBuilder.BuildPrefab(treePos, _cityController.TreePrefabs, Random.Range(0.5f, 1.0f));
+                            else
+                                tree = TreeBuilder.Build(treePos, shader, Random.Range(0.5f, 1.0f));
+
+                            if (tree != null)
+                            {
+                                tree.transform.SetParent(treesParent.transform);
+                                treeCount++;
+                            }
                         }
                     }
                 }
             }
 
-            // 9. Generate raised platform base
+            // 10. Generate raised platform base
             GameObject ground = GroundBuilder.Build(_radius, groundMat, platformMat);
             ground.transform.SetParent(cityRoot.transform);
 
-            // 10. Street lights along roads
+            // 11. Street lights along roads
             int streetLightCount = 0;
             GameObject lightsParent = new GameObject("StreetLights");
             lightsParent.transform.SetParent(cityRoot.transform);
@@ -523,7 +614,6 @@ namespace GeoCity3D.Editor
             {
                 if (!way.HasTag("highway")) continue;
                 string hwType = (way.GetTag("highway") ?? "").ToLower();
-                // Skip footways and paths — no street lights
                 if (hwType == "footway" || hwType == "path" || hwType == "steps" || hwType == "cycleway") continue;
 
                 List<Vector3> roadPath = new List<Vector3>();
@@ -533,7 +623,12 @@ namespace GeoCity3D.Editor
                         roadPath.Add(shifter.GetLocalPosition(node.Latitude, node.Longitude));
                 }
 
-                List<GameObject> lights = StreetFurnitureBuilder.PlaceStreetLights(roadPath, shader, 25f);
+                List<GameObject> lights;
+                if (hasLightPrefabs)
+                    lights = StreetFurnitureBuilder.PlaceStreetLightPrefabs(roadPath, _cityController.StreetLightPrefabs, 25f);
+                else
+                    lights = StreetFurnitureBuilder.PlaceStreetLights(roadPath, shader, 25f);
+
                 foreach (var light in lights)
                 {
                     if (!IsInsideAnyBuilding(light.transform.position, buildingBounds))
@@ -546,13 +641,62 @@ namespace GeoCity3D.Editor
                         Object.DestroyImmediate(light);
                     }
                 }
+
+                // 11b. Street props along this road
+                if (hasPropPrefabs)
+                {
+                    List<GameObject> props = StreetFurnitureBuilder.PlaceStreetProps(
+                        roadPath, _cityController.StreetPropPrefabs, 40f);
+                    foreach (var prop in props)
+                    {
+                        if (!IsInsideAnyBuilding(prop.transform.position, buildingBounds))
+                        {
+                            prop.transform.SetParent(propsParent.transform);
+                            propCount++;
+                        }
+                        else
+                        {
+                            Object.DestroyImmediate(prop);
+                        }
+                    }
+                }
+
+                // 11c. Parked vehicles along this road
+                if (hasVehiclePrefabs)
+                {
+                    List<GameObject> cars = VehicleBuilder.PlaceParkedVehicles(
+                        roadPath, _cityController.VehiclePrefabs, 30f);
+                    foreach (var car in cars)
+                    {
+                        if (!IsInsideAnyBuilding(car.transform.position, buildingBounds))
+                        {
+                            car.transform.SetParent(vehiclesParent.transform);
+                            vehicleCount++;
+                        }
+                        else
+                        {
+                            Object.DestroyImmediate(car);
+                        }
+                    }
+                }
             }
 
-            // 11. Scene atmosphere (lighting, fog, post-processing)
+            // 12. Traffic signals at intersections
+            if (hasSignalPrefabs && intersectionCenters.Count > 0)
+            {
+                List<GameObject> signals = StreetFurnitureBuilder.PlaceTrafficSignals(
+                    intersectionCenters, _cityController.TrafficSignalPrefabs);
+                foreach (var signal in signals)
+                {
+                    signal.transform.SetParent(signalsParent.transform);
+                    signalCount++;
+                }
+            }
+
+            // 13. Scene atmosphere (lighting, fog, post-processing)
             SceneSetup.Setup(_radius);
 
-            // 12. Optimization: Combine all meshes by material to fix extreme lag
-            // This crushes 30,000+ separate draw calls down to ~10.
+            // 14. Optimization: Combine all meshes by material to reduce draw calls
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(buildingsParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(roadsParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(intersectionsParent);
@@ -561,11 +705,14 @@ namespace GeoCity3D.Editor
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(beachesParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(treesParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(lightsParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(vehiclesParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(propsParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(signalsParent);
 
-            // 13. Enable Static Batching for anything remaining (like loose items)
+            // 15. Enable Static Batching for anything remaining
             SetStaticRecursive(cityRoot);
 
-            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}, StreetLights: {streetLightCount}");
+            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}, StreetLights: {streetLightCount}, Vehicles: {vehicleCount}, Props: {propCount}, TrafficSignals: {signalCount}");
             _isGenerating = false;
         }
 
@@ -578,6 +725,53 @@ namespace GeoCity3D.Editor
             {
                 SetStaticRecursive(child.gameObject);
             }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  SIZE-AWARE BUILDING PREFAB SELECTION
+        // ═══════════════════════════════════════════════════════════
+
+        // Tall buildings: skyscrapers, residential blocks, large shops
+        private static readonly string[] TallBuildingNames = new[] {
+            "Sky_big", "Sky_small", "Residential", "Super Market"
+        };
+        // Everything else is considered small (houses, shops, restaurants, etc.)
+
+        private GameObject PickBuildingPrefab(GameObject[] allPrefabs, float footprintArea)
+        {
+            List<GameObject> small = new List<GameObject>();
+            List<GameObject> tall = new List<GameObject>();
+
+            foreach (var prefab in allPrefabs)
+            {
+                string name = prefab.name;
+                bool isTall = false;
+
+                foreach (string pattern in TallBuildingNames)
+                {
+                    if (name.IndexOf(pattern, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        isTall = true;
+                        break;
+                    }
+                }
+
+                if (isTall) tall.Add(prefab);
+                else small.Add(prefab);
+            }
+
+            // Pick based on footprint area:
+            // < 200 m² → small buildings (houses, small shops)
+            // >= 200 m² → tall buildings (skyscrapers, residential, super market)
+            List<GameObject> pool;
+            if (footprintArea >= 200f && tall.Count > 0)
+                pool = tall;
+            else if (small.Count > 0)
+                pool = small;
+            else
+                pool = new List<GameObject>(allPrefabs); // fallback
+
+            return pool[Random.Range(0, pool.Count)];
         }
 
         private bool IsInsideAnyBuilding(Vector3 pos, List<Bounds> buildingBounds)

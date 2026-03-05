@@ -37,6 +37,21 @@ namespace GeoCity3D
         public Material ParkMaterial;
         public Material WaterMaterial;
 
+        [Header("Tree Prefabs (Prefab Mode)")]
+        public GameObject[] TreePrefabs;
+
+        [Header("Street Prop Prefabs")]
+        public GameObject[] StreetLightPrefabs;
+        public GameObject[] TrafficSignalPrefabs;
+        public GameObject[] StreetPropPrefabs;
+
+        [Header("Vehicle Prefabs")]
+        public GameObject[] VehiclePrefabs;
+
+        [Header("Nature Prefabs (Parks)")]
+        public GameObject[] BushPrefabs;
+        public GameObject[] RockPrefabs;
+
         // Backward compatibility
         public Material BuildingMaterial => BuildingWallMaterial;
     }

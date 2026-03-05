@@ -2,11 +2,17 @@ using UnityEngine;
 using UnityEditor;
 using GeoCity3D;
 using GeoCity3D.Visuals;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace GeoCity3D.Editor
 {
     public static class DemoSetup
     {
+        // SimplePoly City asset root (must be imported into this project)
+        private const string SimplePolyRoot = "Assets/SimplePoly City - Low Poly Assets";
+        private const string PrefabRoot = SimplePolyRoot + "/Prefab";
+
         [MenuItem("GeoCity3D/Setup Demo Scene")]
         public static void Setup()
         {
@@ -17,102 +23,196 @@ namespace GeoCity3D.Editor
                 controller = go.AddComponent<CityController>();
             }
 
+            // ── Materials folder ──
             string matPath = "Assets/GeoCity3D/Materials";
             if (!AssetDatabase.IsValidFolder(matPath))
                 AssetDatabase.CreateFolder("Assets/GeoCity3D", "Materials");
 
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null) shader = Shader.Find("HDRP/Lit");
-            if (shader == null) shader = Shader.Find("Standard");
-            if (shader == null) shader = Shader.Find("Diffuse");
+            Shader shader = FindBestShader();
 
-            // Buildings — use asset pack facade textures if available
-            Texture2D wallColor = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Residential Buildings Set/Materials/Wall_C.jpg");
-            Texture2D wallNormal = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Residential Buildings Set/Materials/Wall_N.jpg");
-            Texture2D wallSpecular = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Residential Buildings Set/Materials/Wall_S.jpg");
-            Texture2D wallAO = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Residential Buildings Set/Materials/Hotel_Hous_AO.png");
-
-            if (wallColor != null)
+            // ── Check SimplePoly City is present ──
+            bool hasSimplePoly = AssetDatabase.IsValidFolder(PrefabRoot);
+            if (!hasSimplePoly)
             {
-                controller.BuildingWallMaterial = CreateBuildingMaterial(matPath, "BuildingWallMat", shader,
-                    wallColor, wallNormal, wallSpecular, wallAO);
+                Debug.LogWarning("SimplePoly City - Low Poly Assets not found! " +
+                    "Please import the package into Assets/. Falling back to procedural mode.");
+            }
+
+            // ═══════════════════════════════════════════════════════════
+            //  BUILDING PREFABS
+            // ═══════════════════════════════════════════════════════════
+            if (hasSimplePoly)
+            {
+                // Use procedural buildings (OSM footprint geometry with solid colors)
+                // SimplePoly City prefabs are used for trees, props, vehicles, etc. only
+                controller.BuildingPrefabs = new GameObject[0];
+                controller.BuildingGenerationMode = BuildingMode.Procedural;
+                Debug.Log("DemoSetup: Using procedural buildings + SimplePoly City props/trees/vehicles.");
             }
             else
             {
-                controller.BuildingWallMaterial = CreateSolidMaterial(matPath, "BuildingWallMat", shader,
-                    new Color(0.82f, 0.82f, 0.82f), 0.15f);
+                controller.BuildingPrefabs = new GameObject[0];
+                controller.BuildingGenerationMode = BuildingMode.Procedural;
             }
+
+            // ═══════════════════════════════════════════════════════════
+            //  TREE PREFABS
+            // ═══════════════════════════════════════════════════════════
+            if (hasSimplePoly)
+            {
+                controller.TreePrefabs = LoadPrefabsFromFolder($"{PrefabRoot}/Natures",
+                    new[] { "Tree" });
+                Debug.Log($"DemoSetup: Loaded {controller.TreePrefabs.Length} tree prefabs.");
+            }
+
+            // ═══════════════════════════════════════════════════════════
+            //  BUSH & ROCK PREFABS (parks)
+            // ═══════════════════════════════════════════════════════════
+            if (hasSimplePoly)
+            {
+                controller.BushPrefabs = LoadPrefabsFromFolder($"{PrefabRoot}/Natures",
+                    new[] { "Bush", "Pot Bush" });
+                controller.RockPrefabs = LoadPrefabsFromFolder($"{PrefabRoot}/Natures",
+                    new[] { "Rock" });
+                Debug.Log($"DemoSetup: Loaded {controller.BushPrefabs.Length} bush + {controller.RockPrefabs.Length} rock prefabs.");
+            }
+
+            // ═══════════════════════════════════════════════════════════
+            //  STREET LIGHT PREFABS
+            // ═══════════════════════════════════════════════════════════
+            if (hasSimplePoly)
+            {
+                controller.StreetLightPrefabs = LoadPrefabsFromFolder($"{PrefabRoot}/Props",
+                    new[] { "Street Light" });
+                Debug.Log($"DemoSetup: Loaded {controller.StreetLightPrefabs.Length} street light prefabs.");
+            }
+
+            // ═══════════════════════════════════════════════════════════
+            //  TRAFFIC SIGNAL PREFABS
+            // ═══════════════════════════════════════════════════════════
+            if (hasSimplePoly)
+            {
+                controller.TrafficSignalPrefabs = LoadPrefabsFromFolder($"{PrefabRoot}/Props",
+                    new[] { "Traffic Signal", "Traffic Sign" });
+                Debug.Log($"DemoSetup: Loaded {controller.TrafficSignalPrefabs.Length} traffic signal/sign prefabs.");
+            }
+
+            // ═══════════════════════════════════════════════════════════
+            //  GENERAL STREET PROPS (benches, hydrants, dustbins, etc.)
+            // ═══════════════════════════════════════════════════════════
+            if (hasSimplePoly)
+            {
+                controller.StreetPropPrefabs = LoadPrefabsFromFolder($"{PrefabRoot}/Props",
+                    new[] { "Bench", "Hydrant", "Dustbin", "Bus Stop", "Traffic cone", "Fence" });
+                Debug.Log($"DemoSetup: Loaded {controller.StreetPropPrefabs.Length} street prop prefabs.");
+            }
+
+            // ═══════════════════════════════════════════════════════════
+            //  VEHICLE PREFABS
+            // ═══════════════════════════════════════════════════════════
+            if (hasSimplePoly)
+            {
+                controller.VehiclePrefabs = LoadPrefabsFromFolder(
+                    $"{PrefabRoot}/Vehicles/Vehicle with Static Wheels");
+                Debug.Log($"DemoSetup: Loaded {controller.VehiclePrefabs.Length} vehicle prefabs.");
+            }
+
+            // ═══════════════════════════════════════════════════════════
+            //  MATERIALS — solid colors for procedural elements
+            // ═══════════════════════════════════════════════════════════
+
+            // Building materials (fallback for procedural mode)
+            controller.BuildingWallMaterial = CreateSolidMaterial(matPath, "BuildingWallMat", shader,
+                new Color(0.82f, 0.82f, 0.82f), 0.15f);
             controller.BuildingRoofMaterial = CreateSolidMaterial(matPath, "BuildingRoofMat", shader,
                 new Color(0.45f, 0.43f, 0.42f), 0.1f);
 
-            // ── Road materials — use highway PBR textures if available ──
-            string roadTexPath = "Assets/GeoCity3D/Textures/Road";
-            Texture2D roadAlbedo = AssetDatabase.LoadAssetAtPath<Texture2D>($"{roadTexPath}/highway-lanes_albedo.png");
-            Texture2D roadNormal = AssetDatabase.LoadAssetAtPath<Texture2D>($"{roadTexPath}/highway-lanes_normal-ogl.png");
-            Texture2D roadAO = AssetDatabase.LoadAssetAtPath<Texture2D>($"{roadTexPath}/highway-lanes_ao.png");
+            // Road materials — solid asphalt colors matching low-poly aesthetic
+            controller.MotorwayMaterial = CreateSolidMaterial(matPath, "MotorwayMat", shader,
+                new Color(0.20f, 0.20f, 0.22f), 0.08f);
+            controller.PrimaryRoadMaterial = CreateSolidMaterial(matPath, "PrimaryRoadMat", shader,
+                new Color(0.25f, 0.25f, 0.27f), 0.08f);
+            controller.ResidentialRoadMaterial = CreateSolidMaterial(matPath, "ResidentialRoadMat", shader,
+                new Color(0.30f, 0.30f, 0.32f), 0.08f);
+            controller.FootpathMaterial = CreateSolidMaterial(matPath, "FootpathMat", shader,
+                new Color(0.55f, 0.55f, 0.53f), 0.10f);
+            controller.CrosswalkMaterial = CreateSolidMaterial(matPath, "CrosswalkMat", shader,
+                new Color(0.85f, 0.85f, 0.82f), 0.08f);
 
-            if (roadAlbedo != null)
-            {
-                controller.MotorwayMaterial = CreatePBRMaterial(matPath, "MotorwayMat", shader,
-                    roadAlbedo, roadNormal, roadAO, 0.15f, new Vector2(1f, 4f));
-                controller.PrimaryRoadMaterial = CreatePBRMaterial(matPath, "PrimaryRoadMat", shader,
-                    roadAlbedo, roadNormal, roadAO, 0.15f, new Vector2(1f, 3f));
-                controller.ResidentialRoadMaterial = CreatePBRMaterial(matPath, "ResidentialRoadMat", shader,
-                    roadAlbedo, roadNormal, roadAO, 0.15f, new Vector2(1f, 2f));
-                controller.FootpathMaterial = CreatePBRMaterial(matPath, "FootpathMat", shader,
-                    roadAlbedo, roadNormal, roadAO, 0.2f, new Vector2(0.5f, 2f));
-                controller.CrosswalkMaterial = CreatePBRMaterial(matPath, "CrosswalkMat", shader,
-                    roadAlbedo, roadNormal, roadAO, 0.15f, new Vector2(1f, 1f));
-                Debug.Log("DemoSetup: Using PBR highway textures for roads.");
-            }
-            else
-            {
-                controller.MotorwayMaterial = CreateTexturedMaterial(matPath, "MotorwayMat", shader,
-                    TextureGenerator.CreateMotorwayTexture(), 0.05f);
-                controller.PrimaryRoadMaterial = CreateTexturedMaterial(matPath, "PrimaryRoadMat", shader,
-                    TextureGenerator.CreatePrimaryRoadTexture(), 0.05f);
-                controller.ResidentialRoadMaterial = CreateTexturedMaterial(matPath, "ResidentialRoadMat", shader,
-                    TextureGenerator.CreateResidentialRoadTexture(), 0.05f);
-                controller.FootpathMaterial = CreateTexturedMaterial(matPath, "FootpathMat", shader,
-                    TextureGenerator.CreateFootpathTexture(), 0.05f);
-                controller.CrosswalkMaterial = CreateTexturedMaterial(matPath, "CrosswalkMat", shader,
-                    TextureGenerator.CreateCrosswalkTexture(), 0.05f);
-            }
-
-            // General road fallback
+            // General road / sidewalk
             controller.RoadMaterial = CreateSolidMaterial(matPath, "RoadMat", shader,
                 new Color(0.22f, 0.22f, 0.24f), 0.05f);
             controller.SidewalkMaterial = CreateSolidMaterial(matPath, "SidewalkMat", shader,
                 new Color(0.60f, 0.60f, 0.60f), 0.1f);
 
-            // ── Ground & Park — solid green ──
+            // Ground & Park — solid colors matching low-poly style
             controller.GroundMaterial = CreateSolidMaterial(matPath, "GroundMat", shader,
                 new Color(0.18f, 0.40f, 0.12f), 0.1f);
             controller.ParkMaterial = CreateSolidMaterial(matPath, "ParkMat", shader,
                 new Color(0.18f, 0.55f, 0.12f), 0.05f);
-
             controller.WaterMaterial = CreateSolidMaterial(matPath, "WaterMat", shader,
                 new Color(0.15f, 0.30f, 0.38f), 0.6f);
 
-            // Find and assign building prefabs
-            System.Collections.Generic.List<GameObject> prefabs = new System.Collections.Generic.List<GameObject>();
-            string[] guids = AssetDatabase.FindAssets("t:Model", new[] { "Assets/Residential Buildings Set" });
+            EditorUtility.SetDirty(controller);
+            Selection.activeGameObject = controller.gameObject;
+
+            string modeStr = hasSimplePoly ? "SimplePoly City prefabs" : "Procedural (fallback)";
+            Debug.Log($"Demo Scene Setup Complete! Mode: {modeStr}. Open 'GeoCity3D > City Generator' to build a city.");
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  PREFAB LOADING HELPERS
+        // ═══════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Load all .prefab files from a folder.
+        /// If nameFilters is provided, only include prefabs whose name contains at least one filter string.
+        /// </summary>
+        private static GameObject[] LoadPrefabsFromFolder(string folderPath, string[] nameFilters = null)
+        {
+            if (!AssetDatabase.IsValidFolder(folderPath))
+                return new GameObject[0];
+
+            List<GameObject> result = new List<GameObject>();
+            string[] guids = AssetDatabase.FindAssets("t:Prefab", new[] { folderPath });
+
             foreach (string guid in guids)
             {
                 string path = AssetDatabase.GUIDToAssetPath(guid);
-                if (path.EndsWith(".fbx", System.StringComparison.OrdinalIgnoreCase))
-                {
-                    GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-                    if (prefab != null)
-                        prefabs.Add(prefab);
-                }
-            }
-            controller.BuildingPrefabs = prefabs.ToArray();
+                GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                if (prefab == null) continue;
 
-            EditorUtility.SetDirty(controller);
-            Selection.activeGameObject = controller.gameObject;
-            
-            Debug.Log("Demo Scene Setup Complete! Roads use per-type textured materials. Open 'GeoCity3D > City Generator' to build a city.");
+                if (nameFilters != null && nameFilters.Length > 0)
+                {
+                    bool matches = false;
+                    foreach (string filter in nameFilters)
+                    {
+                        if (prefab.name.IndexOf(filter, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            matches = true;
+                            break;
+                        }
+                    }
+                    if (!matches) continue;
+                }
+
+                result.Add(prefab);
+            }
+
+            return result.ToArray();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  MATERIAL HELPERS
+        // ═══════════════════════════════════════════════════════════
+
+        private static Shader FindBestShader()
+        {
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null) shader = Shader.Find("HDRP/Lit");
+            if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) shader = Shader.Find("Diffuse");
+            return shader;
         }
 
         private static Material CreateSolidMaterial(string folder, string matName, Shader shader,
@@ -134,135 +234,5 @@ namespace GeoCity3D.Editor
             AssetDatabase.CreateAsset(mat, matAssetPath);
             return mat;
         }
-
-        private static Material CreateTexturedMaterial(string folder, string matName, Shader shader,
-            Texture2D texture, float smoothness)
-        {
-            string matAssetPath = $"{folder}/{matName}.mat";
-
-            if (AssetDatabase.LoadAssetAtPath<Material>(matAssetPath) != null)
-                AssetDatabase.DeleteAsset(matAssetPath);
-
-            // Save texture as an asset
-            string texPath = $"{folder}/{matName}_Tex.asset";
-            if (AssetDatabase.LoadAssetAtPath<Texture2D>(texPath) != null)
-                AssetDatabase.DeleteAsset(texPath);
-            AssetDatabase.CreateAsset(texture, texPath);
-
-            Material mat = new Material(shader);
-            mat.mainTexture = texture;
-            mat.color = Color.white;
-            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", smoothness);
-            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", smoothness);
-            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
-            mat.renderQueue = 2000;
-            mat.enableInstancing = true;
-
-            AssetDatabase.CreateAsset(mat, matAssetPath);
-            return mat;
-        }
-
-        private static Material CreatePBRMaterial(string folder, string matName, Shader shader,
-            Texture2D albedo, Texture2D normalMap, Texture2D aoMap,
-            float smoothness, Vector2 tiling)
-        {
-            string matAssetPath = $"{folder}/{matName}.mat";
-            if (AssetDatabase.LoadAssetAtPath<Material>(matAssetPath) != null)
-                AssetDatabase.DeleteAsset(matAssetPath);
-
-            Material mat = new Material(shader);
-            mat.color = Color.white;
-
-            // Albedo
-            mat.mainTexture = albedo;
-            mat.mainTextureScale = tiling;
-
-            // Normal map
-            if (normalMap != null && mat.HasProperty("_BumpMap"))
-            {
-                mat.SetTexture("_BumpMap", normalMap);
-                mat.EnableKeyword("_NORMALMAP");
-                mat.SetFloat("_BumpScale", 1.0f);
-                mat.SetTextureScale("_BumpMap", tiling);
-            }
-
-            // Ambient Occlusion
-            if (aoMap != null && mat.HasProperty("_OcclusionMap"))
-            {
-                mat.SetTexture("_OcclusionMap", aoMap);
-                mat.EnableKeyword("_OCCLUSIONMAP");
-                mat.SetTextureScale("_OcclusionMap", tiling);
-            }
-
-            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", smoothness);
-            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", smoothness);
-            mat.renderQueue = 2000;
-            mat.enableInstancing = true;
-
-            AssetDatabase.CreateAsset(mat, matAssetPath);
-            return mat;
-        }
-
-        private static Material CreateBuildingMaterial(string folder, string matName, Shader shader,
-            Texture2D colorMap, Texture2D normalMap, Texture2D specularMap, Texture2D aoMap)
-        {
-            string matAssetPath = $"{folder}/{matName}.mat";
-            if (AssetDatabase.LoadAssetAtPath<Material>(matAssetPath) != null)
-                AssetDatabase.DeleteAsset(matAssetPath);
-
-            Material mat = new Material(shader);
-            mat.color = Color.white;
-
-            // Color / Albedo map
-            mat.mainTexture = colorMap;
-            mat.mainTextureScale = new Vector2(3f, 3f); // Tile for repetition
-
-            // Normal map
-            if (normalMap != null)
-            {
-                if (mat.HasProperty("_BumpMap"))
-                {
-                    mat.SetTexture("_BumpMap", normalMap);
-                    mat.EnableKeyword("_NORMALMAP");
-                    mat.SetFloat("_BumpScale", 1.0f);
-                    mat.SetTextureScale("_BumpMap", new Vector2(3f, 3f));
-                }
-            }
-
-            // Specular / Metallic map
-            if (specularMap != null)
-            {
-                if (mat.HasProperty("_MetallicGlossMap"))
-                {
-                    mat.SetTexture("_MetallicGlossMap", specularMap);
-                    mat.EnableKeyword("_METALLICGLOSSMAP");
-                    mat.SetTextureScale("_MetallicGlossMap", new Vector2(3f, 3f));
-                }
-                else if (mat.HasProperty("_SpecGlossMap"))
-                {
-                    mat.SetTexture("_SpecGlossMap", specularMap);
-                    mat.SetTextureScale("_SpecGlossMap", new Vector2(3f, 3f));
-                }
-            }
-
-            // Ambient Occlusion
-            if (aoMap != null && mat.HasProperty("_OcclusionMap"))
-            {
-                mat.SetTexture("_OcclusionMap", aoMap);
-                mat.EnableKeyword("_OCCLUSIONMAP");
-                mat.SetTextureScale("_OcclusionMap", new Vector2(3f, 3f));
-            }
-
-            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.15f);
-            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.15f);
-            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
-            mat.renderQueue = 2000;
-            mat.enableInstancing = true;
-
-            AssetDatabase.CreateAsset(mat, matAssetPath);
-            Debug.Log($"Created textured building material with facade textures: {matAssetPath}");
-            return mat;
-        }
     }
 }
-

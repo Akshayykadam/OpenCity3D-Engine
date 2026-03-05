@@ -218,6 +218,116 @@ namespace GeoCity3D.Geometry
         }
 
         // ═══════════════════════════════════════════════
+        //  PREFAB-BASED TREE PLACEMENT
+        // ═══════════════════════════════════════════════
+
+        /// <summary>
+        /// Build a single tree from a prefab array. Auto-scales and grounds the model.
+        /// </summary>
+        public static GameObject BuildPrefab(Vector3 position, GameObject[] prefabs, float scale = 1f)
+        {
+            if (prefabs == null || prefabs.Length == 0) return null;
+
+            GameObject prefab = prefabs[Random.Range(0, prefabs.Length)];
+            float yAngle = Random.Range(0f, 360f);
+            GameObject tree = Object.Instantiate(prefab, position, Quaternion.Euler(0f, yAngle, 0f));
+            tree.name = "Tree_Prefab";
+
+            // Auto-scale: target 3-8m tall
+            float targetHeight = Random.Range(3f, 8f) * scale;
+            Renderer[] renderers = tree.GetComponentsInChildren<Renderer>();
+            if (renderers.Length > 0)
+            {
+                Bounds bounds = renderers[0].bounds;
+                for (int i = 1; i < renderers.Length; i++)
+                    bounds.Encapsulate(renderers[i].bounds);
+
+                float currentHeight = bounds.size.y;
+                if (currentHeight > 0.01f)
+                {
+                    float s = targetHeight / currentHeight;
+                    tree.transform.localScale *= s;
+                }
+
+                // Ground the tree
+                renderers = tree.GetComponentsInChildren<Renderer>();
+                if (renderers.Length > 0)
+                {
+                    Bounds fb = renderers[0].bounds;
+                    for (int i = 1; i < renderers.Length; i++)
+                        fb.Encapsulate(renderers[i].bounds);
+                    Vector3 pos = tree.transform.position;
+                    pos.y -= fb.min.y;
+                    tree.transform.position = pos;
+                }
+            }
+
+            return tree;
+        }
+
+        /// <summary>
+        /// Scatter prefab trees in a circular area.
+        /// </summary>
+        public static List<GameObject> ScatterTreesPrefab(Vector3 center, float radius, int count,
+            GameObject[] treePrefabs)
+        {
+            List<GameObject> trees = new List<GameObject>();
+            if (treePrefabs == null || treePrefabs.Length == 0) return trees;
+
+            for (int i = 0; i < count; i++)
+            {
+                float angle = Random.Range(0f, Mathf.PI * 2f);
+                float dist = Mathf.Sqrt(Random.value) * radius;
+                Vector3 pos = center + new Vector3(Mathf.Cos(angle) * dist, 0, Mathf.Sin(angle) * dist);
+                float treeScale = Random.Range(0.5f, 1.2f);
+
+                GameObject tree = BuildPrefab(pos, treePrefabs, treeScale);
+                if (tree != null) trees.Add(tree);
+            }
+            return trees;
+        }
+
+        /// <summary>
+        /// Scatter trees, bushes, and rocks in a park area using prefabs.
+        /// </summary>
+        public static List<GameObject> ScatterParkNature(Vector3 center, float radius, int totalCount,
+            GameObject[] treePrefabs, GameObject[] bushPrefabs, GameObject[] rockPrefabs)
+        {
+            List<GameObject> objects = new List<GameObject>();
+
+            for (int i = 0; i < totalCount; i++)
+            {
+                float angle = Random.Range(0f, Mathf.PI * 2f);
+                float dist = Mathf.Sqrt(Random.value) * radius;
+                Vector3 pos = center + new Vector3(Mathf.Cos(angle) * dist, 0, Mathf.Sin(angle) * dist);
+
+                // 60% trees, 25% bushes, 15% rocks
+                float r = Random.value;
+                GameObject obj = null;
+
+                if (r < 0.60f && treePrefabs != null && treePrefabs.Length > 0)
+                {
+                    obj = BuildPrefab(pos, treePrefabs, Random.Range(0.5f, 1.2f));
+                }
+                else if (r < 0.85f && bushPrefabs != null && bushPrefabs.Length > 0)
+                {
+                    obj = BuildPrefab(pos, bushPrefabs, Random.Range(0.6f, 1.0f));
+                }
+                else if (rockPrefabs != null && rockPrefabs.Length > 0)
+                {
+                    obj = BuildPrefab(pos, rockPrefabs, Random.Range(0.5f, 1.5f));
+                }
+                else if (treePrefabs != null && treePrefabs.Length > 0)
+                {
+                    obj = BuildPrefab(pos, treePrefabs, Random.Range(0.5f, 1.2f));
+                }
+
+                if (obj != null) objects.Add(obj);
+            }
+            return objects;
+        }
+
+        // ═══════════════════════════════════════════════
         //  MESH PRIMITIVES
         // ═══════════════════════════════════════════════
 
