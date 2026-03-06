@@ -29,7 +29,7 @@ namespace GeoCity3D.Geometry
             GameObject[] bushPrefabs,
             GameObject[] rockPrefabs,
             Transform parent,
-            float cellSize = 12f)
+            float cellSize = 8f)
         {
             if (treePrefabs == null || treePrefabs.Length == 0) return 0;
 
@@ -72,8 +72,8 @@ namespace GeoCity3D.Geometry
                 {
                     if (occupied[gx, gz]) continue;
 
-                    // Only fill ~35% of empty cells to avoid overcrowding
-                    if (Random.value > 0.35f) continue;
+                    // Fill 70% of empty cells for dense vegetation
+                    if (Random.value > 0.70f) continue;
 
                     float worldX = startX + (gx + 0.5f) * cellSize;
                     float worldZ = startZ + (gz + 0.5f) * cellSize;
@@ -84,11 +84,11 @@ namespace GeoCity3D.Geometry
 
                     Vector3 pos = new Vector3(worldX, 0f, worldZ);
 
-                    // Decide what to place: 60% trees, 25% bushes, 15% rocks
+                    // Decide what to place: 75% trees, 15% bushes, 10% rocks
                     float roll = Random.value;
                     GameObject prefab;
 
-                    if (roll < 0.6f && treePrefabs.Length > 0)
+                    if (roll < 0.75f && treePrefabs.Length > 0)
                     {
                         prefab = treePrefabs[Random.Range(0, treePrefabs.Length)];
                     }
