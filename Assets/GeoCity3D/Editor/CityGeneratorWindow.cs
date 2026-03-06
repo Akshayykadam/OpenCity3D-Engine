@@ -269,14 +269,17 @@ namespace GeoCity3D.Editor
             propsParent.transform.SetParent(cityRoot.transform);
             GameObject signalsParent = new GameObject("TrafficSignals");
             signalsParent.transform.SetParent(cityRoot.transform);
+            GameObject lotFillParent = new GameObject("LotFill");
+            lotFillParent.transform.SetParent(cityRoot.transform);
 
             int buildingCount = 0, roadCount = 0, parkCount = 0, waterCount = 0, beachCount = 0, treeCount = 0;
-            int intersectionCount = 0, vehicleCount = 0, propCount = 0, signalCount = 0;
+            int intersectionCount = 0, vehicleCount = 0, propCount = 0, signalCount = 0, lotFillCount = 0;
 
             // Clear intersection data from previous generation
             RoadBuilder.ClearIntersectionData();
 
             List<Bounds> buildingBounds = new List<Bounds>();
+            List<Bounds> roadBounds = new List<Bounds>();
             List<Vector3> parkCenters = new List<Vector3>();
             List<float> parkSizes = new List<float>();
 
@@ -290,7 +293,7 @@ namespace GeoCity3D.Editor
                         && _cityController.BuildingPrefabs != null
                         && _cityController.BuildingPrefabs.Length > 0)
                     {
-                        // ── PREFAB MODE — native size, road-aligned placement ──
+                        // ── PREFAB MODE — Residential Buildings Set (FBX, needs -90° X rotation) ──
                         Vector3 center = Vector3.zero;
                         int nodeCount = 0;
                         List<Vector3> footprintPts = new List<Vector3>();
@@ -310,8 +313,21 @@ namespace GeoCity3D.Editor
                             center /= nodeCount;
                             center.y = 0f;
 
-                            // Find the longest edge of the footprint polygon —
-                            // this typically runs parallel to the road
+                            // Compute footprint size
+                            float minX = float.MaxValue, maxX = float.MinValue;
+                            float minZ = float.MaxValue, maxZ = float.MinValue;
+                            foreach (var p in footprintPts)
+                            {
+                                if (p.x < minX) minX = p.x;
+                                if (p.x > maxX) maxX = p.x;
+                                if (p.z < minZ) minZ = p.z;
+                                if (p.z > maxZ) maxZ = p.z;
+                            }
+                            float footW = maxX - minX;
+                            float footD = maxZ - minZ;
+                            if (footW < 3f || footD < 3f) continue;
+
+                            // Road-aligned rotation from longest footprint edge
                             float yAngle = 0f;
                             if (footprintPts.Count >= 2)
                             {
@@ -330,47 +346,35 @@ namespace GeoCity3D.Editor
                             }
 
                             GameObject prefab = _cityController.BuildingPrefabs[Random.Range(0, _cityController.BuildingPrefabs.Length)];
-                            building = Instantiate(prefab, center, Quaternion.Euler(0f, yAngle, 0f));
+                            // FBX models need -90° X rotation (Y-up to Z-forward)
+                            building = Instantiate(prefab, center, Quaternion.Euler(-90f, yAngle, 0f));
                             building.name = $"Building_{way.Id}";
+                            // FBX default scale is 0.01, so 100x to get Unity scale
+                            building.transform.localScale = Vector3.one * 100f;
 
-                            // Ground the building: shift so bottom sits at y=0
+                            // Fit to footprint
                             Renderer[] mrs = building.GetComponentsInChildren<Renderer>();
                             if (mrs.Length > 0)
                             {
-                                Bounds fb = mrs[0].bounds;
+                                Bounds mb = mrs[0].bounds;
                                 for (int i = 1; i < mrs.Length; i++)
-                                    fb.Encapsulate(mrs[i].bounds);
-                                Vector3 pos = building.transform.position;
-                                pos.y -= fb.min.y;
-                                building.transform.position = pos;
+                                    mb.Encapsulate(mrs[i].bounds);
 
-                                // Recalculate bounds after grounding
+                                float sX = (mb.size.x > 0.1f) ? (footW / mb.size.x) : 1f;
+                                float sZ = (mb.size.z > 0.1f) ? (footD / mb.size.z) : 1f;
+                                float fitScale = Mathf.Clamp(Mathf.Min(sX, sZ), 0.3f, 2f);
+                                building.transform.localScale = Vector3.one * 100f * fitScale;
+
+                                // Ground the building
                                 mrs = building.GetComponentsInChildren<Renderer>();
-                                Bounds newBounds = mrs[0].bounds;
-                                for (int i = 1; i < mrs.Length; i++)
-                                    newBounds.Encapsulate(mrs[i].bounds);
-
-                                // Check overlap with already-placed buildings
-                                // Only reject if the core of the building heavily overlaps
-                                bool overlaps = false;
-                                Bounds testBounds = newBounds;
-                                // Shrink by 60% of size so only heavy overlaps are rejected
-                                float shrinkX = newBounds.size.x * 0.6f;
-                                float shrinkZ = newBounds.size.z * 0.6f;
-                                testBounds.Expand(new Vector3(-shrinkX, 0f, -shrinkZ));
-                                foreach (var existingBounds in buildingBounds)
+                                if (mrs.Length > 0)
                                 {
-                                    if (testBounds.Intersects(existingBounds))
-                                    {
-                                        overlaps = true;
-                                        break;
-                                    }
-                                }
-
-                                if (overlaps)
-                                {
-                                    DestroyImmediate(building);
-                                    building = null;
+                                    Bounds fb = mrs[0].bounds;
+                                    for (int i = 1; i < mrs.Length; i++)
+                                        fb.Encapsulate(mrs[i].bounds);
+                                    Vector3 pos = building.transform.position;
+                                    pos.y -= fb.min.y;
+                                    building.transform.position = pos;
                                 }
                             }
                         }
@@ -387,6 +391,9 @@ namespace GeoCity3D.Editor
                     {
                         building.transform.SetParent(buildingsParent.transform);
                         buildingCount++;
+
+                        // Add LOD system to each building
+                        LODBuilder.AddLOD(building);
 
                         Renderer[] renderers = building.GetComponentsInChildren<Renderer>();
                         if (renderers.Length > 0)
@@ -409,6 +416,16 @@ namespace GeoCity3D.Editor
                     {
                         road.transform.SetParent(roadsParent.transform);
                         roadCount++;
+
+                        // Track road bounds for lot filler
+                        Renderer[] roadRenderers = road.GetComponentsInChildren<Renderer>();
+                        if (roadRenderers.Length > 0)
+                        {
+                            Bounds rb = roadRenderers[0].bounds;
+                            for (int ri = 1; ri < roadRenderers.Length; ri++)
+                                rb.Encapsulate(roadRenderers[ri].bounds);
+                            roadBounds.Add(rb);
+                        }
                     }
                 }
                 else if (IsArea(way, "park") || IsArea(way, "grass") || IsArea(way, "forest")
@@ -693,11 +710,21 @@ namespace GeoCity3D.Editor
                 }
             }
 
-            // 13. Scene atmosphere (lighting, fog, post-processing)
+            // 13. Fill empty lots with vegetation
+            Bounds cityBounds = new Bounds(Vector3.zero, Vector3.one * _radius * 2f);
+            lotFillCount = LotFiller.FillEmptyLots(
+                cityBounds, buildingBounds, roadBounds,
+                _cityController.TreePrefabs,
+                _cityController.BushPrefabs,
+                _cityController.RockPrefabs,
+                lotFillParent.transform);
+            Debug.Log($"Lot Fill: placed {lotFillCount} vegetation objects in empty spaces.");
+
+            // 14. Scene atmosphere (lighting, fog, post-processing)
             SceneSetup.Setup(_radius);
 
-            // 14. Optimization: Combine all meshes by material to reduce draw calls
-            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(buildingsParent);
+            // 15. Optimization: Combine meshes by material (skip buildings — LODGroup needs individual renderers)
+            // Buildings have LODGroup so we don't combine them
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(roadsParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(intersectionsParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(parksParent);
@@ -708,22 +735,50 @@ namespace GeoCity3D.Editor
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(vehiclesParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(propsParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(signalsParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(lotFillParent);
 
-            // 15. Enable Static Batching for anything remaining
-            SetStaticRecursive(cityRoot);
+            // 16. Enhanced Occlusion Culling + Static Batching
+            // Buildings: full occlusion (occluder + occludee)
+            SetStaticFlags(buildingsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccluderStatic | StaticEditorFlags.OccludeeStatic | StaticEditorFlags.ContributeGI);
+            // Smaller objects: occludee only (hidden by buildings, but don't block others)
+            SetStaticFlags(treesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(lightsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(vehiclesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(propsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(signalsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(lotFillParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            // Infrastructure: static batching + occluder
+            SetStaticFlags(roadsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(intersectionsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(parksParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(waterParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(beachesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
 
-            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}, StreetLights: {streetLightCount}, Vehicles: {vehicleCount}, Props: {propCount}, TrafficSignals: {signalCount}");
+            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}, StreetLights: {streetLightCount}, Vehicles: {vehicleCount}, Props: {propCount}, TrafficSignals: {signalCount}, LotFill: {lotFillCount}");
             _isGenerating = false;
         }
 
         private void SetStaticRecursive(GameObject go)
         {
             if (go == null) return;
-            // Mark as batching static to allow Unity to combine meshes for massive objects like 3000m cities
             GameObjectUtility.SetStaticEditorFlags(go, StaticEditorFlags.BatchingStatic | StaticEditorFlags.ReflectionProbeStatic | StaticEditorFlags.OccluderStatic | StaticEditorFlags.OccludeeStatic);
             foreach (Transform child in go.transform)
             {
                 SetStaticRecursive(child.gameObject);
+            }
+        }
+
+        /// <summary>
+        /// Applies specific static editor flags to a parent and all its children recursively.
+        /// Used for differentiated occlusion culling (e.g., buildings as occluders, trees as occludees only).
+        /// </summary>
+        private void SetStaticFlags(GameObject go, StaticEditorFlags flags)
+        {
+            if (go == null) return;
+            GameObjectUtility.SetStaticEditorFlags(go, flags);
+            foreach (Transform child in go.transform)
+            {
+                SetStaticFlags(child.gameObject, flags);
             }
         }
 

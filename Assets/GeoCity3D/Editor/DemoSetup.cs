@@ -41,18 +41,35 @@ namespace GeoCity3D.Editor
             // ═══════════════════════════════════════════════════════════
             //  BUILDING PREFABS
             // ═══════════════════════════════════════════════════════════
-            if (hasSimplePoly)
+            // Use Residential Buildings Set FBX models for buildings
+            string residentialPath = "Assets/Residential Buildings Set";
+            if (AssetDatabase.IsValidFolder(residentialPath))
             {
-                // Use procedural buildings (OSM footprint geometry with solid colors)
-                // SimplePoly City prefabs are used for trees, props, vehicles, etc. only
-                controller.BuildingPrefabs = new GameObject[0];
-                controller.BuildingGenerationMode = BuildingMode.Procedural;
-                Debug.Log("DemoSetup: Using procedural buildings + SimplePoly City props/trees/vehicles.");
+                List<GameObject> buildingModels = new List<GameObject>();
+                // Load all 10 FBX files by direct path
+                for (int i = 1; i <= 10; i++)
+                {
+                    string fbxPath = $"{residentialPath}/Residential Buildings {i:D3}.fbx";
+                    GameObject model = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
+                    if (model != null)
+                    {
+                        buildingModels.Add(model);
+                        Debug.Log($"  Loaded: {fbxPath}");
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"  NOT FOUND: {fbxPath}");
+                    }
+                }
+                controller.BuildingPrefabs = buildingModels.ToArray();
+                controller.BuildingGenerationMode = BuildingMode.Prefab;
+                Debug.Log($"DemoSetup: Loaded {controller.BuildingPrefabs.Length} Residential Buildings Set FBX models.");
             }
             else
             {
                 controller.BuildingPrefabs = new GameObject[0];
                 controller.BuildingGenerationMode = BuildingMode.Procedural;
+                Debug.LogWarning($"DemoSetup: Folder not found at '{residentialPath}', using procedural buildings.");
             }
 
             // ═══════════════════════════════════════════════════════════
