@@ -14,12 +14,23 @@ namespace GeoCity3D.Editor
 {
     public class CityGeneratorWindow : EditorWindow
     {
-        private double _latitude = 40.65370764935582;
-        private double _longitude = -73.98882885896016;
+        private double _latitude = 50.113048581605035;
+        private double _longitude = 8.67213038757014;
         private float _radius = 1000f;
         
         private CityController _cityController;
         private bool _isGenerating = false;
+
+        private int _selectedTab = 0;
+        private readonly string[] _tabs = { "Real-World OSM", "Procedural Map" };
+        private float _proceduralMapRadius = 350f;
+        private float _buildingCornerRadius = 1.8f;
+        private bool _includeRiver = true;
+        private bool _includeLake = true;
+        private bool _includeVehicles = true;
+        private bool _includeTrees = true;
+        private bool _includeStones = true;
+        private bool _includeSignals = true;
 
         [MenuItem("GeoCity3D/City Generator")]
         public static void ShowWindow()
@@ -27,31 +38,147 @@ namespace GeoCity3D.Editor
             GetWindow<CityGeneratorWindow>("City Generator");
         }
 
+        private void OnEnable()
+        {
+            EnsureCityController();
+        }
+
+        private void EnsureCityController()
+        {
+            if (_cityController == null)
+            {
+                _cityController = Object.FindFirstObjectByType<CityController>();
+            }
+        }
+
         private void OnGUI()
         {
-            GUILayout.Label("GeoCity3D Generator", EditorStyles.boldLabel);
+            GUILayout.Label("GeoCity3D City Generator", EditorStyles.boldLabel);
 
-            _latitude = EditorGUILayout.DoubleField("Latitude", _latitude);
-            _longitude = EditorGUILayout.DoubleField("Longitude", _longitude);
-            _radius = EditorGUILayout.FloatField("Radius (m)", _radius);
+            EnsureCityController();
 
             _cityController = (CityController)EditorGUILayout.ObjectField("City Controller", _cityController, typeof(CityController), true);
 
-            if (GUILayout.Button("Generate City"))
+            if (_cityController == null)
             {
-                if (_cityController == null)
+                EditorGUILayout.HelpBox("No City Controller found in the active scene.\nClick below to create and configure one with materials automatically.", MessageType.Warning);
+                if (GUILayout.Button("Setup City Controller in Scene", GUILayout.Height(24)))
                 {
-                    Debug.LogError("Please assign a City Controller scene object with materials!");
-                    return;
+                    DemoSetup.Setup();
+                    _cityController = Object.FindFirstObjectByType<CityController>();
                 }
-                
-                if (!_isGenerating)
-                {
-                    _isGenerating = true;
-                    SimpleEditorCoroutine.Start(GenerateCity());
-                }
+                EditorGUILayout.Space(4);
+            }
+            else
+            {
+                EditorGUILayout.Space(2);
             }
 
+            _selectedTab = GUILayout.Toolbar(_selectedTab, _tabs);
+            EditorGUILayout.Space(8);
+
+            if (_selectedTab == 0)
+            {
+                GUILayout.Label("Real-World OSM Ingestion", EditorStyles.boldLabel);
+                _latitude = EditorGUILayout.DoubleField("Latitude", _latitude);
+                _longitude = EditorGUILayout.DoubleField("Longitude", _longitude);
+                _radius = EditorGUILayout.FloatField("Radius (m)", _radius);
+
+                if (_cityController != null)
+                {
+                    _cityController.BuildingGenerationMode = (BuildingMode)EditorGUILayout.EnumPopup("Building Generation Mode", _cityController.BuildingGenerationMode);
+                }
+
+                EditorGUILayout.Space(6);
+                DrawCityElementsOptions();
+
+                EditorGUILayout.Space(8);
+                if (GUILayout.Button("Generate City (From OSM)", GUILayout.Height(30)))
+                {
+                    EnsureCityController();
+                    if (_cityController == null)
+                    {
+                        Debug.Log("No City Controller in scene. Setting up scene CityController automatically...");
+                        DemoSetup.Setup();
+                        _cityController = Object.FindFirstObjectByType<CityController>();
+                    }
+
+                    if (_cityController == null)
+                    {
+                        Debug.LogError("Please assign a City Controller scene object with materials!");
+                        return;
+                    }
+                    
+                    if (!_isGenerating)
+                    {
+                        _isGenerating = true;
+                        SimpleEditorCoroutine.Start(GenerateCity());
+                    }
+                }
+            }
+            else
+            {
+                GUILayout.Label("Synthetic Procedural Map Generator", EditorStyles.boldLabel);
+                _proceduralMapRadius = EditorGUILayout.FloatField("Map Radius (m)", _proceduralMapRadius);
+                _buildingCornerRadius = EditorGUILayout.Slider("Building Corner Radius (m)", _buildingCornerRadius, 0.5f, 3.5f);
+                _includeRiver = EditorGUILayout.Toggle("Include Meandering River", _includeRiver);
+                _includeLake = EditorGUILayout.Toggle("Include Scenic Lake", _includeLake);
+
+                EditorGUILayout.Space(6);
+                DrawCityElementsOptions();
+
+                EditorGUILayout.Space(8);
+                if (GUILayout.Button("Generate Procedural Map", GUILayout.Height(30)))
+                {
+                    EnsureCityController();
+                    if (_cityController == null)
+                    {
+                        Debug.Log("No City Controller in scene. Setting up scene CityController automatically...");
+                        DemoSetup.Setup();
+                        _cityController = Object.FindFirstObjectByType<CityController>();
+                    }
+
+                    if (_cityController == null)
+                    {
+                        Debug.LogError("Please assign a City Controller scene object with materials!");
+                        return;
+                    }
+                    
+                    if (!_isGenerating)
+                    {
+                        _isGenerating = true;
+                        SimpleEditorCoroutine.Start(GenerateProceduralMap());
+                    }
+                }
+            }
+        }
+
+        private void DrawCityElementsOptions()
+        {
+            EditorGUILayout.LabelField("City Elements (Select / Unselect):", EditorStyles.boldLabel);
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Select All", EditorStyles.miniButtonLeft))
+            {
+                _includeVehicles = true;
+                _includeTrees = true;
+                _includeStones = true;
+                _includeSignals = true;
+            }
+            if (GUILayout.Button("Deselect All", EditorStyles.miniButtonRight))
+            {
+                _includeVehicles = false;
+                _includeTrees = false;
+                _includeStones = false;
+                _includeSignals = false;
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space(2);
+            _includeVehicles = EditorGUILayout.Toggle("Vehicles (Cars)", _includeVehicles);
+            _includeTrees = EditorGUILayout.Toggle("Trees & Nature", _includeTrees);
+            _includeStones = EditorGUILayout.Toggle("Stones & Rocks", _includeStones);
+            _includeSignals = EditorGUILayout.Toggle("Signals & Street Lights", _includeSignals);
         }
 
         // ── Solid color material — renders BOTH sides so geometry never looks hollow ──
@@ -156,7 +283,7 @@ namespace GeoCity3D.Editor
             Debug.Log($"Parsed: {data.Nodes.Count} nodes, {data.Ways.Count} ways.");
 
             // 3. Setup Origin
-            var shifter = FindObjectOfType<OriginShifter>();
+            var shifter = FindFirstObjectByType<OriginShifter>();
             if (shifter == null)
             {
                  GameObject shifterObj = new GameObject("OriginShifter");
@@ -178,37 +305,13 @@ namespace GeoCity3D.Editor
             // ═══════════════════════════════════════════════════════════
 
             // ── Building Materials ──
-            // Procedural mode: pool of solid-color materials (no textures, clean look)
-            // Prefab mode: materials come from the FBX models themselves
-            List<Material> wallPool = new List<Material>();
-            List<Material> roofPool = new List<Material>();
-
-            if (_cityController.BuildingGenerationMode == BuildingMode.Procedural)
-            {
-                // Create 10 wall colors + 4 roof colors with PBR tuning
-                for (int i = 0; i < 10; i++)
-                {
-                    Color wallColor = TextureGenerator.GetRandomWallColor();
-                    Material wm = CreateSolidMaterial(shader, wallColor, 0.35f);
-                    // Slight metallic for realistic plaster/concrete
-                    if (wm.HasProperty("_Metallic")) wm.SetFloat("_Metallic", 0.05f);
-                    wallPool.Add(wm);
-                }
-                for (int i = 0; i < 4; i++)
-                {
-                    Color roofColor = TextureGenerator.GetRandomRoofColor();
-                    Material rm = CreateSolidMaterial(shader, roofColor, 0.15f);
-                    if (rm.HasProperty("_Metallic")) rm.SetFloat("_Metallic", 0.02f);
-                    roofPool.Add(rm);
-                }
-            }
-
-            // Always create at least one fallback material for buildings/roofs
-            Material buildingMat = CreateSolidMaterial(shader, new Color(0.82f, 0.82f, 0.82f), 0.15f);
-            Material roofMat = CreateSolidMaterial(shader, new Color(0.55f, 0.53f, 0.50f), 0.1f);
-            
-            if (wallPool.Count > 0) buildingMat = wallPool[0];
-            if (roofPool.Count > 0) roofMat = roofPool[0];
+            // In Procedural mode, we enforce identical building structure & materials
+            Material buildingMat = _cityController.BuildingWallMaterial != null 
+                ? _cityController.BuildingWallMaterial 
+                : CreateSolidMaterial(shader, new Color(0.88f, 0.88f, 0.86f), 0.25f);
+            Material roofMat = _cityController.BuildingRoofMaterial != null 
+                ? _cityController.BuildingRoofMaterial 
+                : CreateSolidMaterial(shader, new Color(0.35f, 0.35f, 0.38f), 0.15f);
 
             // Roads
             Texture2D roadNormalMap = TextureGenerator.CreateAsphaltNormalMap();
@@ -280,8 +383,38 @@ namespace GeoCity3D.Editor
 
             List<Bounds> buildingBounds = new List<Bounds>();
             List<Bounds> roadBounds = new List<Bounds>();
+            List<WaterAreaInfo> waterAreas = new List<WaterAreaInfo>();
+            List<WaterwayInfo> waterways = new List<WaterwayInfo>();
             List<Vector3> parkCenters = new List<Vector3>();
             List<float> parkSizes = new List<float>();
+
+            // Pre-pass: Catalog all water bodies (polygons and linear waterways) upfront
+            // so buildings, parks, street trees, street furniture, and lot filler never spawn inside water.
+            foreach (var way in data.Ways)
+            {
+                if (IsWaterArea(way))
+                {
+                    List<Vector3> polygon = new List<Vector3>();
+                    foreach (long nodeId in way.NodeIds)
+                    {
+                        if (data.Nodes.TryGetValue(nodeId, out OsmNode node))
+                            polygon.Add(shifter.GetLocalPosition(node.Latitude, node.Longitude));
+                    }
+                    if (polygon.Count >= 3)
+                        waterAreas.Add(new WaterAreaInfo(polygon));
+                }
+                else if (IsLinearWaterway(way))
+                {
+                    List<Vector3> path = new List<Vector3>();
+                    foreach (long nodeId in way.NodeIds)
+                    {
+                        if (data.Nodes.TryGetValue(nodeId, out OsmNode node))
+                            path.Add(shifter.GetLocalPosition(node.Latitude, node.Longitude));
+                    }
+                    if (path.Count >= 2)
+                        waterways.Add(new WaterwayInfo(path, DetermineRiverWidth(way)));
+                }
+            }
 
             foreach (var way in data.Ways)
             {
@@ -381,10 +514,8 @@ namespace GeoCity3D.Editor
                     }
                     else
                     {
-                        // ── PROCEDURAL MODE ── solid-color buildings
-                        Material thisWall = wallPool.Count > 0 ? wallPool[Random.Range(0, wallPool.Count)] : buildingMat;
-                        Material thisRoof = roofPool.Count > 0 ? roofPool[Random.Range(0, roofPool.Count)] : roofMat;
-                        building = BuildingBuilder.Build(way, data, thisWall, thisRoof, shifter);
+                        // ── PROCEDURAL MODE ── identical architectural structures with rounded corners
+                        building = BuildingBuilder.Build(way, data, buildingMat, roofMat, shifter);
                     }
 
                     if (building != null)
@@ -472,7 +603,7 @@ namespace GeoCity3D.Editor
                 }
                 else if (IsWaterArea(way))
                 {
-                    GameObject water = AreaBuilder.Build(way, data, waterMat, shifter, -0.15f, "Water");
+                    GameObject water = WaterBuilder.BuildLake(way, data, waterMat, shifter, "Lake");
                     if (water != null)
                     {
                         water.transform.SetParent(waterParent.transform);
@@ -482,11 +613,9 @@ namespace GeoCity3D.Editor
                 else if (IsLinearWaterway(way))
                 {
                     float riverWidth = DetermineRiverWidth(way);
-                    // Use RoadBuilder's backward-compatible overload for water strips
-                    GameObject river = RoadBuilder.Build(way, data, waterMat, shifter, riverWidth);
+                    GameObject river = WaterBuilder.BuildRiver(way, data, waterMat, shifter, riverWidth);
                     if (river != null)
                     {
-                        river.name = $"River_{way.Id}";
                         river.transform.SetParent(waterParent.transform);
                         waterCount++;
                     }
@@ -538,80 +667,106 @@ namespace GeoCity3D.Editor
             bool hasVehiclePrefabs = _cityController.VehiclePrefabs != null && _cityController.VehiclePrefabs.Length > 0;
 
             // 8. Dense trees in parks
-            for (int i = 0; i < parkCenters.Count; i++)
+            // 8. Dense trees and stones in parks
+            if (_includeTrees || _includeStones)
             {
-                float parkRadius = Mathf.Max(parkSizes[i] * 0.85f, 8f);
-                int treeCountInPark = Mathf.Clamp(Mathf.RoundToInt(parkRadius * parkRadius * 0.04f), 8, 80);
+                for (int i = 0; i < parkCenters.Count; i++)
+                {
+                    float parkRadius = Mathf.Max(parkSizes[i] * 0.85f, 8f);
+                    int treeCountInPark = Mathf.Clamp(Mathf.RoundToInt(parkRadius * parkRadius * 0.04f), 8, 80);
 
-                if (hasTreePrefabs)
-                {
-                    // Use prefab-based park nature with trees, bushes, and rocks
-                    List<GameObject> parkNature = TreeBuilder.ScatterParkNature(
-                        parkCenters[i], parkRadius, treeCountInPark,
-                        _cityController.TreePrefabs, _cityController.BushPrefabs, _cityController.RockPrefabs);
-                    foreach (var obj in parkNature)
+                    if (hasTreePrefabs || hasRockPrefabs)
                     {
-                        obj.transform.SetParent(treesParent.transform);
-                        treeCount++;
+                        GameObject[] tp = _includeTrees ? _cityController.TreePrefabs : null;
+                        GameObject[] bp = _includeTrees ? _cityController.BushPrefabs : null;
+                        GameObject[] rp = _includeStones ? _cityController.RockPrefabs : null;
+                        List<GameObject> parkNature = TreeBuilder.ScatterParkNature(
+                            parkCenters[i], parkRadius, treeCountInPark,
+                            tp, bp, rp);
+                        foreach (var obj in parkNature)
+                        {
+                            if (IsInsideAnyBuilding(obj.transform.position, buildingBounds) ||
+                                WaterBuilder.IsPointInWater(obj.transform.position, waterAreas, waterways, 1.2f))
+                            {
+                                Object.DestroyImmediate(obj);
+                            }
+                            else
+                            {
+                                obj.transform.SetParent(treesParent.transform);
+                                treeCount++;
+                            }
+                        }
                     }
-                }
-                else
-                {
-                    // Fallback: procedural trees
-                    List<GameObject> parkTrees = TreeBuilder.ScatterTrees(parkCenters[i], parkRadius, treeCountInPark, shader);
-                    foreach (var t in parkTrees)
+                    else if (_includeTrees)
                     {
-                        t.transform.SetParent(treesParent.transform);
-                        treeCount++;
+                        // Fallback: procedural trees
+                        List<GameObject> parkTrees = TreeBuilder.ScatterTrees(parkCenters[i], parkRadius, treeCountInPark, shader);
+                        foreach (var t in parkTrees)
+                        {
+                            if (IsInsideAnyBuilding(t.transform.position, buildingBounds) ||
+                                WaterBuilder.IsPointInWater(t.transform.position, waterAreas, waterways, 1.2f))
+                            {
+                                Object.DestroyImmediate(t);
+                            }
+                            else
+                            {
+                                t.transform.SetParent(treesParent.transform);
+                                treeCount++;
+                            }
+                        }
                     }
                 }
             }
 
             // 9. Street trees along roads
-            foreach (var way in data.Ways)
+            if (_includeTrees)
             {
-                if (!way.HasTag("highway")) continue;
-                string hwType = (way.GetTag("highway") ?? "").ToLower();
-                if (hwType == "motorway" || hwType == "trunk" || hwType == "footway" || hwType == "path" || hwType == "steps") continue;
-
-                List<Vector3> roadPath = new List<Vector3>();
-                foreach (long nodeId in way.NodeIds)
+                foreach (var way in data.Ways)
                 {
-                    if (data.Nodes.TryGetValue(nodeId, out OsmNode node))
-                        roadPath.Add(shifter.GetLocalPosition(node.Latitude, node.Longitude));
-                }
+                    if (!way.HasTag("highway")) continue;
+                    string hwType = (way.GetTag("highway") ?? "").ToLower();
+                    if (hwType == "motorway" || hwType == "trunk" || hwType == "footway" || hwType == "path" || hwType == "steps") continue;
 
-                for (int i = 0; i < roadPath.Count - 1; i++)
-                {
-                    float segLen = Vector3.Distance(roadPath[i], roadPath[i + 1]);
-                    if (segLen < 12f) continue;
-
-                    Vector3 dir = (roadPath[i + 1] - roadPath[i]).normalized;
-                    Vector3 right = Vector3.Cross(Vector3.up, dir).normalized;
-
-                    int treesAlongSeg = Mathf.FloorToInt(segLen / 18f);
-                    for (int t = 0; t < treesAlongSeg; t++)
+                    List<Vector3> roadPath = new List<Vector3>();
+                    foreach (long nodeId in way.NodeIds)
                     {
-                        if (Random.value > 0.5f) continue;
+                        if (data.Nodes.TryGetValue(nodeId, out OsmNode node))
+                            roadPath.Add(shifter.GetLocalPosition(node.Latitude, node.Longitude));
+                    }
 
-                        float tPos = (t + 0.5f) / Mathf.Max(treesAlongSeg, 1);
-                        Vector3 pos = Vector3.Lerp(roadPath[i], roadPath[i + 1], tPos);
+                    for (int i = 0; i < roadPath.Count - 1; i++)
+                    {
+                        float segLen = Vector3.Distance(roadPath[i], roadPath[i + 1]);
+                        if (segLen < 12f) continue;
 
-                        float side = Random.value > 0.5f ? 1f : -1f;
-                        Vector3 treePos = pos + right * side * (5f + Random.Range(0f, 2f));
+                        Vector3 dir = (roadPath[i + 1] - roadPath[i]).normalized;
+                        Vector3 right = Vector3.Cross(Vector3.up, dir).normalized;
 
-                        if (!IsInsideAnyBuilding(treePos, buildingBounds))
+                        int treesAlongSeg = Mathf.FloorToInt(segLen / 18f);
+                        for (int t = 0; t < treesAlongSeg; t++)
                         {
-                            GameObject tree;
-                            if (hasTreePrefabs)
-                                tree = TreeBuilder.BuildPrefab(treePos, _cityController.TreePrefabs, Random.Range(0.5f, 1.0f));
-                            else
-                                tree = TreeBuilder.Build(treePos, shader, Random.Range(0.5f, 1.0f));
+                            if (Random.value > 0.5f) continue;
 
-                            if (tree != null)
+                            float tPos = (t + 0.5f) / Mathf.Max(treesAlongSeg, 1);
+                            Vector3 pos = Vector3.Lerp(roadPath[i], roadPath[i + 1], tPos);
+
+                            float side = Random.value > 0.5f ? 1f : -1f;
+                            Vector3 treePos = pos + right * side * (5f + Random.Range(0f, 2f));
+
+                            if (!IsInsideAnyBuilding(treePos, buildingBounds) &&
+                                !WaterBuilder.IsPointInWater(treePos, waterAreas, waterways, 1.5f))
                             {
-                                tree.transform.SetParent(treesParent.transform);
-                                treeCount++;
+                                GameObject tree;
+                                if (hasTreePrefabs)
+                                    tree = TreeBuilder.BuildPrefab(treePos, _cityController.TreePrefabs, Random.Range(0.5f, 1.0f));
+                                else
+                                    tree = TreeBuilder.Build(treePos, shader, Random.Range(0.5f, 1.0f));
+
+                                if (tree != null)
+                                {
+                                    tree.transform.SetParent(treesParent.transform);
+                                    treeCount++;
+                                }
                             }
                         }
                     }
@@ -640,22 +795,26 @@ namespace GeoCity3D.Editor
                         roadPath.Add(shifter.GetLocalPosition(node.Latitude, node.Longitude));
                 }
 
-                List<GameObject> lights;
-                if (hasLightPrefabs)
-                    lights = StreetFurnitureBuilder.PlaceStreetLightPrefabs(roadPath, _cityController.StreetLightPrefabs, 25f);
-                else
-                    lights = StreetFurnitureBuilder.PlaceStreetLights(roadPath, shader, 25f);
-
-                foreach (var light in lights)
+                if (_includeSignals)
                 {
-                    if (!IsInsideAnyBuilding(light.transform.position, buildingBounds))
-                    {
-                        light.transform.SetParent(lightsParent.transform);
-                        streetLightCount++;
-                    }
+                    List<GameObject> lights;
+                    if (hasLightPrefabs)
+                        lights = StreetFurnitureBuilder.PlaceStreetLightPrefabs(roadPath, _cityController.StreetLightPrefabs, 25f);
                     else
+                        lights = StreetFurnitureBuilder.PlaceStreetLights(roadPath, shader, 25f);
+
+                    foreach (var light in lights)
                     {
-                        Object.DestroyImmediate(light);
+                        if (!IsInsideAnyBuilding(light.transform.position, buildingBounds) &&
+                            !WaterBuilder.IsPointInWater(light.transform.position, waterAreas, waterways, 0.5f))
+                        {
+                            light.transform.SetParent(lightsParent.transform);
+                            streetLightCount++;
+                        }
+                        else
+                        {
+                            Object.DestroyImmediate(light);
+                        }
                     }
                 }
 
@@ -666,7 +825,8 @@ namespace GeoCity3D.Editor
                         roadPath, _cityController.StreetPropPrefabs, 40f);
                     foreach (var prop in props)
                     {
-                        if (!IsInsideAnyBuilding(prop.transform.position, buildingBounds))
+                        if (!IsInsideAnyBuilding(prop.transform.position, buildingBounds) &&
+                            !WaterBuilder.IsPointInWater(prop.transform.position, waterAreas, waterways, 0.5f))
                         {
                             prop.transform.SetParent(propsParent.transform);
                             propCount++;
@@ -679,13 +839,14 @@ namespace GeoCity3D.Editor
                 }
 
                 // 11c. Parked vehicles along this road
-                if (hasVehiclePrefabs)
+                if (_includeVehicles && hasVehiclePrefabs)
                 {
                     List<GameObject> cars = VehicleBuilder.PlaceParkedVehicles(
                         roadPath, _cityController.VehiclePrefabs, 30f);
                     foreach (var car in cars)
                     {
-                        if (!IsInsideAnyBuilding(car.transform.position, buildingBounds))
+                        if (!IsInsideAnyBuilding(car.transform.position, buildingBounds) &&
+                            !WaterBuilder.IsPointInWater(car.transform.position, waterAreas, waterways, 0.5f))
                         {
                             car.transform.SetParent(vehiclesParent.transform);
                             vehicleCount++;
@@ -699,7 +860,7 @@ namespace GeoCity3D.Editor
             }
 
             // 12. Traffic signals at intersections
-            if (hasSignalPrefabs && intersectionCenters.Count > 0)
+            if (_includeSignals && hasSignalPrefabs && intersectionCenters.Count > 0)
             {
                 List<GameObject> signals = StreetFurnitureBuilder.PlaceTrafficSignals(
                     intersectionCenters, _cityController.TrafficSignalPrefabs);
@@ -710,15 +871,25 @@ namespace GeoCity3D.Editor
                 }
             }
 
-            // 13. Fill empty lots with vegetation
-            Bounds cityBounds = new Bounds(Vector3.zero, Vector3.one * _radius * 2f);
-            lotFillCount = LotFiller.FillEmptyLots(
-                cityBounds, buildingBounds, roadBounds,
-                _cityController.TreePrefabs,
-                _cityController.BushPrefabs,
-                _cityController.RockPrefabs,
-                lotFillParent.transform);
-            Debug.Log($"Lot Fill: placed {lotFillCount} vegetation objects in empty spaces.");
+            // 13. Fill empty lots with vegetation (excluding buildings, roads, and all water areas/corridors)
+            if (_includeTrees || _includeStones)
+            {
+                GameObject[] lotTrees = _includeTrees ? _cityController.TreePrefabs : null;
+                GameObject[] lotBushes = _includeTrees ? _cityController.BushPrefabs : null;
+                GameObject[] lotRocks = _includeStones ? _cityController.RockPrefabs : null;
+
+                Bounds cityBounds = new Bounds(Vector3.zero, Vector3.one * _radius * 2f);
+                lotFillCount = LotFiller.FillEmptyLots(
+                    cityBounds, buildingBounds, roadBounds,
+                    lotTrees,
+                    lotBushes,
+                    lotRocks,
+                    lotFillParent.transform,
+                    8f,
+                    waterAreas,
+                    waterways);
+                Debug.Log($"Lot Fill: placed {lotFillCount} vegetation objects in empty spaces.");
+            }
 
             // 14. Scene atmosphere (lighting, fog, post-processing)
             SceneSetup.Setup(_radius);
@@ -1060,6 +1231,941 @@ namespace GeoCity3D.Editor
             mesh.RecalculateBounds();
             mf.sharedMesh = mesh;
 
+            return go;
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  SYNTHETIC PROCEDURAL MAP GENERATOR
+        // ═══════════════════════════════════════════════════════════
+
+        private IEnumerator GenerateProceduralMap()
+        {
+            Debug.Log("Starting Procedural Map Generation...");
+            float radius = _proceduralMapRadius;
+
+            // 1. Setup Origin
+            var shifter = FindFirstObjectByType<OriginShifter>();
+            if (shifter == null)
+            {
+                GameObject shifterObj = new GameObject("OriginShifter");
+                shifter = shifterObj.AddComponent<OriginShifter>();
+            }
+            shifter.SetOrigin(0.0, 0.0);
+
+            // 2. Find shader
+            Shader shader = FindBestShader();
+            if (shader == null)
+            {
+                Debug.LogError("No valid shader found!");
+                _isGenerating = false;
+                yield break;
+            }
+
+            // 3. Materials
+            Material buildingMat = _cityController.BuildingWallMaterial != null
+                ? _cityController.BuildingWallMaterial
+                : CreateSolidMaterial(shader, new Color(0.88f, 0.88f, 0.86f), 0.25f);
+            Material roofMat = _cityController.BuildingRoofMaterial != null
+                ? _cityController.BuildingRoofMaterial
+                : CreateSolidMaterial(shader, new Color(0.35f, 0.35f, 0.38f), 0.15f);
+
+            Texture2D roadNormalMap = TextureGenerator.CreateAsphaltNormalMap();
+            yield return null;
+            Material primaryRoadMat = _cityController.PrimaryRoadMaterial != null ? _cityController.PrimaryRoadMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreatePrimaryRoadTexture(), roadNormalMap, 0.05f);
+            Material residentialRoadMat = _cityController.ResidentialRoadMaterial != null ? _cityController.ResidentialRoadMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateResidentialRoadTexture(), roadNormalMap, 0.05f);
+            Material sidewalkMat = _cityController.SidewalkMaterial != null ? _cityController.SidewalkMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateSidewalkTexture(), 0.1f);
+            Material parkMat = _cityController.ParkMaterial != null ? _cityController.ParkMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateParkTexture(), 0.05f);
+            Material waterMat = _cityController.WaterMaterial != null ? _cityController.WaterMaterial : CreateWaterMaterial(shader);
+            Material groundMat = _cityController.GroundMaterial != null ? _cityController.GroundMaterial : CreateTexturedMaterial(shader, TextureGenerator.CreateGroundTexture(), 0.1f);
+            Material platformMat = CreateSolidMaterial(shader, new Color(0.28f, 0.28f, 0.30f), 0.15f);
+
+            // 4. Root hierarchy
+            GameObject cityRoot = new GameObject("ProceduralCity");
+            cityRoot.transform.position = Vector3.zero;
+
+            GameObject ground = GroundBuilder.Build(radius, groundMat, platformMat);
+            ground.transform.SetParent(cityRoot.transform);
+
+            GameObject waterParent = new GameObject("Water");
+            waterParent.transform.SetParent(cityRoot.transform);
+
+            GameObject roadsParent = new GameObject("Roads");
+            roadsParent.transform.SetParent(cityRoot.transform);
+
+            GameObject buildingsParent = new GameObject("Buildings");
+            buildingsParent.transform.SetParent(cityRoot.transform);
+
+            GameObject parksParent = new GameObject("Parks");
+            parksParent.transform.SetParent(cityRoot.transform);
+
+            GameObject treesParent = new GameObject("Trees");
+            treesParent.transform.SetParent(cityRoot.transform);
+
+            GameObject stonesParent = new GameObject("Stones");
+            stonesParent.transform.SetParent(cityRoot.transform);
+
+            GameObject vehiclesParent = new GameObject("Vehicles");
+            vehiclesParent.transform.SetParent(cityRoot.transform);
+
+            GameObject lightsParent = new GameObject("StreetLights");
+            lightsParent.transform.SetParent(cityRoot.transform);
+
+            GameObject signalsParent = new GameObject("TrafficSignals");
+            signalsParent.transform.SetParent(cityRoot.transform);
+
+            RoadBuilder.ClearIntersectionData();
+            StreetFurnitureBuilder.ResetMaterialPool();
+            TreeBuilder.ResetMaterialPool();
+            _sharedCarMaterials = null;
+            _proceduralRockMat = null;
+            _sharedSignalPoleMat = null;
+
+            int buildingCount = 0;
+            int roadCount = 0;
+            int waterCount = 0;
+            int treeCount = 0;
+            int stoneCount = 0;
+            int vehicleCount = 0;
+            int lightCount = 0;
+            int signalCount = 0;
+
+            // ── 5. RIVER GENERATION ──
+            float riverWidth = 24f;
+            List<Vector3> riverPath = new List<Vector3>();
+            if (_includeRiver)
+            {
+                float riverMinX = -radius * 1.05f;
+                float riverMaxX = radius * 1.05f;
+                int riverSteps = 16;
+                for (int i = 0; i <= riverSteps; i++)
+                {
+                    float t = (float)i / riverSteps;
+                    float rx = Mathf.Lerp(riverMinX, riverMaxX, t);
+                    float rz = Mathf.Sin(t * Mathf.PI * 2.2f) * (radius * 0.28f) + (t - 0.5f) * (radius * 0.15f);
+                    riverPath.Add(new Vector3(rx, 0f, rz));
+                }
+
+                GameObject river = WaterBuilder.BuildRiver(riverPath, riverWidth, waterMat, 9001, "Procedural_River");
+                if (river != null)
+                {
+                    river.transform.SetParent(waterParent.transform);
+                    waterCount++;
+                }
+            }
+
+            // ── 6. LAKE GENERATION ──
+            Vector3 lakeCenter = new Vector3(radius * 0.42f, 0f, radius * 0.42f);
+            float lakeBaseRadius = radius * 0.20f;
+            List<Vector3> lakePolygon = new List<Vector3>();
+            if (_includeLake)
+            {
+                int lakePoints = 20;
+                for (int i = 0; i < lakePoints; i++)
+                {
+                    float angle = (float)i / lakePoints * Mathf.PI * 2f;
+                    float r = lakeBaseRadius + Mathf.Sin(angle * 3f) * (lakeBaseRadius * 0.25f) + Mathf.Cos(angle * 5f) * (lakeBaseRadius * 0.12f);
+                    float lx = lakeCenter.x + Mathf.Cos(angle) * r;
+                    float lz = lakeCenter.z + Mathf.Sin(angle) * r;
+                    lakePolygon.Add(new Vector3(lx, 0f, lz));
+                }
+
+                GameObject lake = WaterBuilder.BuildLake(lakePolygon, waterMat, 9002, "Procedural_Lake");
+                if (lake != null)
+                {
+                    lake.transform.SetParent(waterParent.transform);
+                    waterCount++;
+                }
+
+                // Park surrounding lake
+                List<Vector3> lakeParkPoly = new List<Vector3>();
+                for (int i = 0; i < lakePoints; i++)
+                {
+                    float angle = (float)i / lakePoints * Mathf.PI * 2f;
+                    float r = (lakeBaseRadius + Mathf.Sin(angle * 3f) * (lakeBaseRadius * 0.25f) + Mathf.Cos(angle * 5f) * (lakeBaseRadius * 0.12f)) * 1.30f;
+                    lakeParkPoly.Add(new Vector3(lakeCenter.x + Mathf.Cos(angle) * r, 0f, lakeCenter.z + Mathf.Sin(angle) * r));
+                }
+                GameObject lakePark = AreaBuilder.Build(lakeParkPoly, parkMat, 9003, "LakePark", 0.02f);
+                if (lakePark != null) lakePark.transform.SetParent(parksParent.transform);
+            }
+
+            // Water reference lists for exclusion checks
+            List<WaterAreaInfo> procWaterAreas = new List<WaterAreaInfo>();
+            List<WaterwayInfo> procWaterways = new List<WaterwayInfo>();
+            if (_includeRiver && riverPath != null && riverPath.Count >= 2)
+                procWaterways.Add(new WaterwayInfo(riverPath, riverWidth));
+            if (_includeLake && lakePolygon != null && lakePolygon.Count >= 3)
+                procWaterAreas.Add(new WaterAreaInfo(lakePolygon));
+
+            // ── 7. ROAD NETWORK & BRIDGES ──
+            float gridSpacing = 80f;
+            List<float> xRoads = new List<float>();
+            List<float> zRoads = new List<float>();
+
+            for (float x = -radius * 0.72f; x <= radius * 0.72f; x += gridSpacing)
+                xRoads.Add(x);
+            for (float z = -radius * 0.72f; z <= radius * 0.72f; z += gridSpacing)
+                zRoads.Add(z);
+
+            List<List<Vector3>> allRoadPaths = new List<List<Vector3>>();
+
+            // North-South Roads & Bridges
+            foreach (float rx in xRoads)
+            {
+                if (_includeRiver && riverPath.Count >= 2)
+                {
+                    float tRoad = (rx - (-radius * 1.05f)) / (2.1f * radius);
+                    float riverZAtRx = Mathf.Sin(tRoad * Mathf.PI * 2.2f) * (radius * 0.28f) + (tRoad - 0.5f) * (radius * 0.15f);
+                    float bridgeHalfSpan = riverWidth * 0.5f + 8f;
+
+                    List<Vector3> southRoad = new List<Vector3>
+                    {
+                        new Vector3(rx, 0f, -radius * 0.75f),
+                        new Vector3(rx, 0f, riverZAtRx - bridgeHalfSpan)
+                    };
+                    List<Vector3> bridgePath = new List<Vector3>
+                    {
+                        new Vector3(rx, 0f, riverZAtRx - bridgeHalfSpan),
+                        new Vector3(rx, 0f, riverZAtRx),
+                        new Vector3(rx, 0f, riverZAtRx + bridgeHalfSpan)
+                    };
+                    List<Vector3> northRoad = new List<Vector3>
+                    {
+                        new Vector3(rx, 0f, riverZAtRx + bridgeHalfSpan),
+                        new Vector3(rx, 0f, radius * 0.75f)
+                    };
+
+                    GameObject r1 = RoadBuilder.CreateSolidStrip(southRoad, 8f, 0.08f, 0.12f, primaryRoadMat, $"Road_S_{rx}");
+                    if (r1 != null) { r1.transform.SetParent(roadsParent.transform); roadCount++; allRoadPaths.Add(southRoad); }
+
+                    GameObject br = BridgeBuilder.Build(bridgePath, 8f, primaryRoadMat, sidewalkMat, (long)(rx + 100000), "primary");
+                    if (br != null) { br.transform.SetParent(roadsParent.transform); roadCount++; allRoadPaths.Add(bridgePath); }
+
+                    GameObject r2 = RoadBuilder.CreateSolidStrip(northRoad, 8f, 0.08f, 0.12f, primaryRoadMat, $"Road_N_{rx}");
+                    if (r2 != null) { r2.transform.SetParent(roadsParent.transform); roadCount++; allRoadPaths.Add(northRoad); }
+                }
+                else
+                {
+                    List<Vector3> roadPath = new List<Vector3>
+                    {
+                        new Vector3(rx, 0f, -radius * 0.75f),
+                        new Vector3(rx, 0f, radius * 0.75f)
+                    };
+                    GameObject r = RoadBuilder.CreateSolidStrip(roadPath, 8f, 0.08f, 0.12f, primaryRoadMat, $"Road_NS_{rx}");
+                    if (r != null) { r.transform.SetParent(roadsParent.transform); roadCount++; allRoadPaths.Add(roadPath); }
+                }
+            }
+
+            // East-West Roads
+            foreach (float rz in zRoads)
+            {
+                if (_includeLake && Mathf.Abs(rz - lakeCenter.z) < lakeBaseRadius * 0.85f)
+                    continue; // Don't cut through the lake
+
+                List<Vector3> roadPath = new List<Vector3>
+                {
+                    new Vector3(-radius * 0.75f, 0f, rz),
+                    new Vector3(radius * 0.75f, 0f, rz)
+                };
+                GameObject r = RoadBuilder.CreateSolidStrip(roadPath, 7f, 0.08f, 0.12f, residentialRoadMat, $"Road_EW_{rz}");
+                if (r != null) { r.transform.SetParent(roadsParent.transform); roadCount++; allRoadPaths.Add(roadPath); }
+            }
+
+            // Collect intersections for signal placement
+            List<Vector3> intersectionCenters = new List<Vector3>();
+            foreach (float rx in xRoads)
+            {
+                foreach (float rz in zRoads)
+                {
+                    Vector3 intPt = new Vector3(rx, 0f, rz);
+                    if (_includeLake && Vector3.Distance(intPt, lakeCenter) < lakeBaseRadius * 1.15f)
+                        continue;
+                    if (_includeRiver && WaterBuilder.IsPointInWater(intPt, procWaterAreas, procWaterways, 4f))
+                        continue;
+                    intersectionCenters.Add(intPt);
+                }
+            }
+
+            yield return null;
+
+            // ── 8. IDENTICAL ROUNDED PROCEDURAL BUILDINGS ──
+            List<Bounds> buildingBounds = new List<Bounds>();
+            float buildingWidth = 22f;
+            float buildingDepth = 22f;
+            float bCornerRadius = _buildingCornerRadius;
+            int bId = 1;
+
+            for (int xi = 0; xi < xRoads.Count - 1; xi++)
+            {
+                float x1 = xRoads[xi] + 8f;
+                float x2 = xRoads[xi + 1] - 8f;
+
+                for (int zi = 0; zi < zRoads.Count - 1; zi++)
+                {
+                    float z1 = zRoads[zi] + 8f;
+                    float z2 = zRoads[zi + 1] - 8f;
+
+                    float blockW = x2 - x1;
+                    float blockH = z2 - z1;
+                    if (blockW < buildingWidth || blockH < buildingDepth) continue;
+
+                    int countX = Mathf.FloorToInt((blockW + 4f) / (buildingWidth + 6f));
+                    int countZ = Mathf.FloorToInt((blockH + 4f) / (buildingDepth + 6f));
+                    if (countX < 1 || countZ < 1) continue;
+
+                    float stepX = blockW / countX;
+                    float stepZ = blockH / countZ;
+
+                    for (int bx = 0; bx < countX; bx++)
+                    {
+                        for (int bz = 0; bz < countZ; bz++)
+                        {
+                            float cx = x1 + (bx + 0.5f) * stepX;
+                            float cz = z1 + (bz + 0.5f) * stepZ;
+                            Vector3 pos = new Vector3(cx, 0f, cz);
+
+                            // Distance checks against lake and river
+                            if (_includeLake && Vector3.Distance(pos, lakeCenter) < lakeBaseRadius * 1.35f)
+                                continue;
+
+                            if (WaterBuilder.IsPointInWater(pos, procWaterAreas, procWaterways, 12f))
+                                continue;
+
+                            float halfW = buildingWidth * 0.5f;
+                            float halfD = buildingDepth * 0.5f;
+                            List<Vector3> footprint = new List<Vector3>
+                            {
+                                new Vector3(cx - halfW, 0f, cz - halfD),
+                                new Vector3(cx + halfW, 0f, cz - halfD),
+                                new Vector3(cx + halfW, 0f, cz + halfD),
+                                new Vector3(cx - halfW, 0f, cz + halfD)
+                            };
+
+                            // Identical 4-floor architectural building height
+                            float bHeight = 12.8f;
+                            GameObject bObj = BuildingBuilder.BuildFromFootprint(footprint, bHeight,
+                                buildingMat, roofMat, bId++, bCornerRadius);
+
+                            if (bObj != null)
+                            {
+                                bObj.transform.SetParent(buildingsParent.transform);
+                                LODBuilder.AddLOD(bObj);
+                                buildingCount++;
+
+                                Renderer[] renderers = bObj.GetComponentsInChildren<Renderer>();
+                                if (renderers.Length > 0)
+                                {
+                                    Bounds totalBounds = renderers[0].bounds;
+                                    for (int i = 1; i < renderers.Length; i++)
+                                        totalBounds.Encapsulate(renderers[i].bounds);
+                                    buildingBounds.Add(totalBounds);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Determine if CityController has prefabs assigned
+            bool hasTreePrefabs = _cityController.TreePrefabs != null && _cityController.TreePrefabs.Length > 0;
+            bool hasRockPrefabs = _cityController.RockPrefabs != null && _cityController.RockPrefabs.Length > 0;
+            bool hasLightPrefabs = _cityController.StreetLightPrefabs != null && _cityController.StreetLightPrefabs.Length > 0;
+            bool hasSignalPrefabs = _cityController.TrafficSignalPrefabs != null && _cityController.TrafficSignalPrefabs.Length > 0;
+            bool hasVehiclePrefabs = _cityController.VehiclePrefabs != null && _cityController.VehiclePrefabs.Length > 0;
+
+            // ── 9. TREES & VEGETATION ──
+            if (_includeTrees)
+            {
+                // Riverbank trees
+                if (_includeRiver)
+                {
+                    for (int i = 0; i < riverPath.Count; i += 2)
+                    {
+                        Vector3 fwd = i < riverPath.Count - 1 ? (riverPath[i + 1] - riverPath[i]).normalized : Vector3.right;
+                        Vector3 rgt = Vector3.Cross(Vector3.up, fwd).normalized;
+                        Vector3 tPosL = riverPath[i] - rgt * (riverWidth * 0.5f + 4.5f);
+                        Vector3 tPosR = riverPath[i] + rgt * (riverWidth * 0.5f + 4.5f);
+                        if (!WaterBuilder.IsPointInWater(tPosL, procWaterAreas, procWaterways, 1.2f) &&
+                            !IsInsideAnyBuilding(tPosL, buildingBounds))
+                        {
+                            GameObject treeL = hasTreePrefabs
+                                ? TreeBuilder.BuildPrefab(tPosL, _cityController.TreePrefabs, Random.Range(0.8f, 1.2f))
+                                : TreeBuilder.Build(tPosL, shader, 1.2f);
+                            if (treeL != null) { treeL.transform.SetParent(treesParent.transform); treeCount++; }
+                        }
+                        if (!WaterBuilder.IsPointInWater(tPosR, procWaterAreas, procWaterways, 1.2f) &&
+                            !IsInsideAnyBuilding(tPosR, buildingBounds))
+                        {
+                            GameObject treeR = hasTreePrefabs
+                                ? TreeBuilder.BuildPrefab(tPosR, _cityController.TreePrefabs, Random.Range(0.8f, 1.2f))
+                                : TreeBuilder.Build(tPosR, shader, 1.2f);
+                            if (treeR != null) { treeR.transform.SetParent(treesParent.transform); treeCount++; }
+                        }
+                    }
+                }
+
+                // Lakeside trees
+                if (_includeLake)
+                {
+                    int treeCountOnLake = 16;
+                    for (int i = 0; i < treeCountOnLake; i++)
+                    {
+                        float angle = (float)i / treeCountOnLake * Mathf.PI * 2f;
+                        float r = lakeBaseRadius * 1.25f;
+                        Vector3 tPos = new Vector3(lakeCenter.x + Mathf.Cos(angle) * r, 0f, lakeCenter.z + Mathf.Sin(angle) * r);
+                        if (!WaterBuilder.IsPointInWater(tPos, procWaterAreas, procWaterways, 1.2f) &&
+                            !IsInsideAnyBuilding(tPos, buildingBounds))
+                        {
+                            GameObject tree = hasTreePrefabs
+                                ? TreeBuilder.BuildPrefab(tPos, _cityController.TreePrefabs, Random.Range(0.8f, 1.3f))
+                                : TreeBuilder.Build(tPos, shader, 1.3f);
+                            if (tree != null) { tree.transform.SetParent(treesParent.transform); treeCount++; }
+                        }
+                    }
+                }
+
+                // Avenue trees along roads
+                foreach (var rPath in allRoadPaths)
+                {
+                    for (int i = 0; i < rPath.Count - 1; i++)
+                    {
+                        float segLen = Vector3.Distance(rPath[i], rPath[i + 1]);
+                        if (segLen < 16f) continue;
+                        Vector3 dir = (rPath[i + 1] - rPath[i]).normalized;
+                        Vector3 rgt = Vector3.Cross(Vector3.up, dir).normalized;
+                        int countOnSeg = Mathf.FloorToInt(segLen / 24f);
+                        for (int s = 0; s < countOnSeg; s++)
+                        {
+                            float t = (s + 0.5f) / Mathf.Max(countOnSeg, 1);
+                            Vector3 pt = Vector3.Lerp(rPath[i], rPath[i + 1], t);
+                            float side = (s % 2 == 0) ? 1f : -1f;
+                            Vector3 tPos = pt + rgt * (side * 5.5f);
+                            if (!WaterBuilder.IsPointInWater(tPos, procWaterAreas, procWaterways, 1.5f) &&
+                                !IsInsideAnyBuilding(tPos, buildingBounds))
+                            {
+                                GameObject tree = hasTreePrefabs
+                                    ? TreeBuilder.BuildPrefab(tPos, _cityController.TreePrefabs, Random.Range(0.7f, 1.1f))
+                                    : TreeBuilder.Build(tPos, shader, Random.Range(0.7f, 1.1f));
+                                if (tree != null) { tree.transform.SetParent(treesParent.transform); treeCount++; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── 10. STONES & ROCKS ──
+            if (_includeStones)
+            {
+                // Riverbank rocks
+                if (_includeRiver)
+                {
+                    for (int i = 0; i < riverPath.Count; i++)
+                    {
+                        Vector3 fwd = (i < riverPath.Count - 1) ? (riverPath[i + 1] - riverPath[i]).normalized : Vector3.right;
+                        Vector3 rgt = Vector3.Cross(Vector3.up, fwd).normalized;
+                        for (int side = -1; side <= 1; side += 2)
+                        {
+                            if (Random.value < 0.35f) continue;
+                            float dist = riverWidth * 0.5f + Random.Range(1.5f, 4.5f);
+                            Vector3 rockPos = riverPath[i] + rgt * (side * dist) + fwd * Random.Range(-3f, 3f);
+                            rockPos.y = 0f;
+                            if (!WaterBuilder.IsPointInWater(rockPos, procWaterAreas, procWaterways, 0.4f) &&
+                                !IsInsideAnyBuilding(rockPos, buildingBounds))
+                            {
+                                GameObject rock = hasRockPrefabs
+                                    ? TreeBuilder.BuildPrefab(rockPos, _cityController.RockPrefabs, Random.Range(0.6f, 1.5f))
+                                    : BuildProceduralRock(rockPos, Random.Range(0.7f, 1.6f), shader);
+                                if (rock != null) { rock.transform.SetParent(stonesParent.transform); stoneCount++; }
+                            }
+                        }
+                    }
+                }
+
+                // Lakeside shoreline rocks
+                if (_includeLake)
+                {
+                    int rockCountOnLake = 18;
+                    for (int i = 0; i < rockCountOnLake; i++)
+                    {
+                        float angle = (float)i / rockCountOnLake * Mathf.PI * 2f + Random.Range(-0.1f, 0.1f);
+                        float r = lakeBaseRadius * Random.Range(1.04f, 1.22f);
+                        Vector3 rockPos = new Vector3(lakeCenter.x + Mathf.Cos(angle) * r, 0f, lakeCenter.z + Mathf.Sin(angle) * r);
+                        if (!WaterBuilder.IsPointInWater(rockPos, procWaterAreas, procWaterways, 0.4f) &&
+                            !IsInsideAnyBuilding(rockPos, buildingBounds))
+                        {
+                            GameObject rock = hasRockPrefabs
+                                ? TreeBuilder.BuildPrefab(rockPos, _cityController.RockPrefabs, Random.Range(0.7f, 1.6f))
+                                : BuildProceduralRock(rockPos, Random.Range(0.8f, 1.8f), shader);
+                            if (rock != null) { rock.transform.SetParent(stonesParent.transform); stoneCount++; }
+                        }
+                    }
+                }
+            }
+
+            // ── 11. VEHICLES (CARS) ──
+            if (_includeVehicles)
+            {
+                foreach (var rPath in allRoadPaths)
+                {
+                    if (hasVehiclePrefabs)
+                    {
+                        List<GameObject> cars = VehicleBuilder.PlaceParkedVehicles(
+                            rPath, _cityController.VehiclePrefabs, 32f);
+                        foreach (var car in cars)
+                        {
+                            if (!IsInsideAnyBuilding(car.transform.position, buildingBounds) &&
+                                !WaterBuilder.IsPointInWater(car.transform.position, procWaterAreas, procWaterways, 0.5f))
+                            {
+                                car.transform.SetParent(vehiclesParent.transform);
+                                vehicleCount++;
+                            }
+                            else
+                            {
+                                Object.DestroyImmediate(car);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        vehicleCount += PlaceProceduralVehiclesAlongPath(rPath, shader, vehiclesParent, buildingBounds, procWaterAreas, procWaterways, 32f);
+                    }
+                }
+            }
+
+            // ── 12. SIGNALS & STREET LIGHTS ──
+            if (_includeSignals)
+            {
+                // Street lights along roads
+                foreach (var rPath in allRoadPaths)
+                {
+                    List<GameObject> lights = hasLightPrefabs
+                        ? StreetFurnitureBuilder.PlaceStreetLightPrefabs(rPath, _cityController.StreetLightPrefabs, 35f)
+                        : StreetFurnitureBuilder.PlaceStreetLights(rPath, shader, 35f);
+
+                    foreach (var light in lights)
+                    {
+                        if (!IsInsideAnyBuilding(light.transform.position, buildingBounds) &&
+                            !WaterBuilder.IsPointInWater(light.transform.position, procWaterAreas, procWaterways, 0.5f))
+                        {
+                            light.transform.SetParent(lightsParent.transform);
+                            lightCount++;
+                        }
+                        else
+                        {
+                            Object.DestroyImmediate(light);
+                        }
+                    }
+                }
+
+                // Traffic signals at intersections
+                if (hasSignalPrefabs)
+                {
+                    List<GameObject> signals = StreetFurnitureBuilder.PlaceTrafficSignals(
+                        intersectionCenters, _cityController.TrafficSignalPrefabs);
+                    foreach (var signal in signals)
+                    {
+                        if (!IsInsideAnyBuilding(signal.transform.position, buildingBounds) &&
+                            !WaterBuilder.IsPointInWater(signal.transform.position, procWaterAreas, procWaterways, 0.5f))
+                        {
+                            signal.transform.SetParent(signalsParent.transform);
+                            signalCount++;
+                        }
+                        else
+                        {
+                            Object.DestroyImmediate(signal);
+                        }
+                    }
+                }
+                else
+                {
+                    foreach (var center in intersectionCenters)
+                    {
+                        Vector3[] cornerOffsets = new Vector3[]
+                        {
+                            new Vector3(4.8f, 0f, 4.8f),
+                            new Vector3(-4.8f, 0f, -4.8f)
+                        };
+                        foreach (var off in cornerOffsets)
+                        {
+                            Vector3 sPos = center + off;
+                            if (!IsInsideAnyBuilding(sPos, buildingBounds) &&
+                                !WaterBuilder.IsPointInWater(sPos, procWaterAreas, procWaterways, 0.5f))
+                            {
+                                float yAngle = Mathf.Atan2(-off.x, -off.z) * Mathf.Rad2Deg;
+                                GameObject signal = BuildProceduralTrafficSignal(sPos, Quaternion.Euler(0f, yAngle, 0f), shader);
+                                if (signal != null)
+                                {
+                                    signal.transform.SetParent(signalsParent.transform);
+                                    signalCount++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            yield return null;
+
+            // ── 13. MESH COMBINING & BATCHING ──
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(roadsParent);
+            GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(waterParent);
+            if (parksParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(parksParent);
+            if (treesParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(treesParent);
+            if (stonesParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(stonesParent);
+            if (vehiclesParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(vehiclesParent);
+            if (lightsParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(lightsParent);
+            if (signalsParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(signalsParent);
+
+            SetStaticFlags(buildingsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccluderStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(roadsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(waterParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(parksParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(treesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(stonesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(vehiclesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(lightsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(signalsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+
+            Debug.Log($"Procedural Map Complete! Buildings: {buildingCount}, Roads: {roadCount}, Water Bodies: {waterCount}, Trees: {treeCount}, Stones: {stoneCount}, Vehicles: {vehicleCount}, Lights: {lightCount}, Signals: {signalCount}");
+            _isGenerating = false;
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  PROCEDURAL FALLBACK GENERATORS (Rocks, Vehicles, Signals)
+        // ═══════════════════════════════════════════════════════════
+
+        // ── Procedural Rock Generator ──
+        private static Material _proceduralRockMat;
+        private static Mesh _cachedRockMesh;
+
+        private static Material GetProceduralRockMaterial(Shader shader)
+        {
+            if (_proceduralRockMat == null)
+            {
+                _proceduralRockMat = new Material(shader);
+                _proceduralRockMat.color = new Color(0.48f, 0.47f, 0.45f);
+                if (_proceduralRockMat.HasProperty("_Smoothness")) _proceduralRockMat.SetFloat("_Smoothness", 0.05f);
+                if (_proceduralRockMat.HasProperty("_Glossiness")) _proceduralRockMat.SetFloat("_Glossiness", 0.05f);
+            }
+            return _proceduralRockMat;
+        }
+
+        private static Mesh CreateProceduralRockMesh()
+        {
+            if (_cachedRockMesh != null) return _cachedRockMesh;
+
+            float t = (1.0f + Mathf.Sqrt(5.0f)) * 0.5f;
+            Vector3[] baseVerts = new Vector3[]
+            {
+                new Vector3(-1, t, 0).normalized,
+                new Vector3(1, t, 0).normalized,
+                new Vector3(-1, -t, 0).normalized,
+                new Vector3(1, -t, 0).normalized,
+                new Vector3(0, -1, t).normalized,
+                new Vector3(0, 1, t).normalized,
+                new Vector3(0, -1, -t).normalized,
+                new Vector3(0, 1, -t).normalized,
+                new Vector3(t, 0, -1).normalized,
+                new Vector3(t, 0, 1).normalized,
+                new Vector3(-t, 0, -1).normalized,
+                new Vector3(-t, 0, 1).normalized
+            };
+
+            int[] indices = new int[]
+            {
+                0, 11, 5,   0, 5, 1,    0, 1, 7,    0, 7, 10,   0, 10, 11,
+                1, 5, 9,    5, 11, 4,   11, 10, 2,  10, 7, 6,   7, 1, 8,
+                3, 9, 4,    3, 4, 2,    3, 2, 6,    3, 6, 8,    3, 8, 9,
+                4, 9, 5,    2, 4, 11,   6, 2, 10,   8, 6, 7,    9, 8, 1
+            };
+
+            System.Random rnd = new System.Random(42);
+            for (int i = 0; i < baseVerts.Length; i++)
+            {
+                float disp = 0.85f + (float)rnd.NextDouble() * 0.35f;
+                baseVerts[i] *= disp;
+                if (baseVerts[i].y < 0) baseVerts[i].y *= 0.65f;
+            }
+
+            Vector3[] verts = new Vector3[indices.Length];
+            int[] tris = new int[indices.Length];
+            for (int i = 0; i < indices.Length; i++)
+            {
+                verts[i] = baseVerts[indices[i]];
+                tris[i] = i;
+            }
+
+            Mesh mesh = new Mesh();
+            mesh.name = "ProceduralRock";
+            mesh.vertices = verts;
+            mesh.triangles = tris;
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+
+            _cachedRockMesh = mesh;
+            return mesh;
+        }
+
+        private GameObject BuildProceduralRock(Vector3 position, float scale, Shader shader)
+        {
+            GameObject rock = new GameObject("ProceduralRock");
+            rock.transform.position = position;
+            rock.transform.rotation = Quaternion.Euler(Random.Range(-10f, 10f), Random.Range(0f, 360f), Random.Range(-10f, 10f));
+            rock.transform.localScale = new Vector3(scale * Random.Range(0.85f, 1.25f), scale * Random.Range(0.6f, 0.9f), scale * Random.Range(0.85f, 1.25f));
+
+            MeshFilter mf = rock.AddComponent<MeshFilter>();
+            MeshRenderer mr = rock.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = GetProceduralRockMaterial(shader);
+            mf.sharedMesh = CreateProceduralRockMesh();
+            return rock;
+        }
+
+        // ── Procedural Low-Poly Car Generator ──
+        private static readonly Color[] CarColors = new Color[]
+        {
+            new Color(0.85f, 0.18f, 0.15f), // Crimson red
+            new Color(0.18f, 0.42f, 0.78f), // Cobalt blue
+            new Color(0.92f, 0.92f, 0.92f), // Arctic white
+            new Color(0.22f, 0.22f, 0.24f), // Charcoal dark
+            new Color(0.95f, 0.75f, 0.12f), // Taxi yellow
+            new Color(0.88f, 0.48f, 0.12f), // Sunset orange
+            new Color(0.25f, 0.65f, 0.35f)  // Forest green
+        };
+        private static List<Material> _sharedCarMaterials;
+        private static Material _sharedCarGlassMat;
+        private static Material _sharedCarWheelMat;
+
+        private static void EnsureCarMaterials(Shader shader)
+        {
+            if (_sharedCarMaterials != null && _sharedCarMaterials.Count > 0) return;
+            _sharedCarMaterials = new List<Material>();
+            foreach (var col in CarColors)
+            {
+                Material m = new Material(shader);
+                m.color = col;
+                if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0.65f);
+                if (m.HasProperty("_Glossiness")) m.SetFloat("_Glossiness", 0.65f);
+                _sharedCarMaterials.Add(m);
+            }
+            _sharedCarGlassMat = new Material(shader);
+            _sharedCarGlassMat.color = new Color(0.15f, 0.20f, 0.25f, 0.9f);
+            if (_sharedCarGlassMat.HasProperty("_Smoothness")) _sharedCarGlassMat.SetFloat("_Smoothness", 0.9f);
+            if (_sharedCarGlassMat.HasProperty("_Glossiness")) _sharedCarGlassMat.SetFloat("_Glossiness", 0.9f);
+
+            _sharedCarWheelMat = new Material(shader);
+            _sharedCarWheelMat.color = new Color(0.12f, 0.12f, 0.12f);
+            if (_sharedCarWheelMat.HasProperty("_Smoothness")) _sharedCarWheelMat.SetFloat("_Smoothness", 0.2f);
+            if (_sharedCarWheelMat.HasProperty("_Glossiness")) _sharedCarWheelMat.SetFloat("_Glossiness", 0.2f);
+        }
+
+        private GameObject CreateProceduralCar(Vector3 position, Quaternion rotation, Shader shader)
+        {
+            EnsureCarMaterials(shader);
+            GameObject car = new GameObject("ProceduralCar");
+            car.transform.position = position;
+            car.transform.rotation = rotation;
+
+            Material bodyMat = _sharedCarMaterials[Random.Range(0, _sharedCarMaterials.Count)];
+
+            // Body chassis
+            GameObject chassis = CreateBoxDirect("Chassis", new Vector3(1.8f, 0.55f, 4.0f), bodyMat);
+            chassis.transform.SetParent(car.transform, false);
+            chassis.transform.localPosition = new Vector3(0f, 0.45f, 0f);
+
+            // Cabin
+            GameObject cabin = CreateBoxDirect("Cabin", new Vector3(1.5f, 0.50f, 2.1f), _sharedCarGlassMat);
+            cabin.transform.SetParent(car.transform, false);
+            cabin.transform.localPosition = new Vector3(0f, 0.90f, -0.2f);
+
+            // 4 Wheels
+            Vector3[] wheelOffsets = new Vector3[]
+            {
+                new Vector3(-0.92f, 0.28f, 1.2f),
+                new Vector3(0.92f, 0.28f, 1.2f),
+                new Vector3(-0.92f, 0.28f, -1.2f),
+                new Vector3(0.92f, 0.28f, -1.2f)
+            };
+            foreach (var wOff in wheelOffsets)
+            {
+                GameObject wheel = CreateBoxDirect("Wheel", new Vector3(0.24f, 0.48f, 0.56f), _sharedCarWheelMat);
+                wheel.transform.SetParent(car.transform, false);
+                wheel.transform.localPosition = wOff;
+            }
+
+            return car;
+        }
+
+        private int PlaceProceduralVehiclesAlongPath(
+            List<Vector3> roadPath,
+            Shader shader,
+            GameObject parent,
+            List<Bounds> buildingBounds,
+            List<WaterAreaInfo> waterAreas,
+            List<WaterwayInfo> waterways,
+            float spacing = 32f)
+        {
+            if (roadPath == null || roadPath.Count < 2) return 0;
+
+            int count = 0;
+            float accumulated = 0f;
+            bool rightSide = true;
+
+            for (int i = 0; i < roadPath.Count - 1; i++)
+            {
+                Vector3 a = roadPath[i];
+                Vector3 b = roadPath[i + 1];
+                float segLen = Vector3.Distance(a, b);
+                if (segLen < 10f) continue;
+                Vector3 dir = (b - a).normalized;
+                Vector3 right = Vector3.Cross(Vector3.up, dir).normalized;
+
+                float pos = spacing - accumulated;
+                while (pos < segLen)
+                {
+                    if (Random.value < 0.45f)
+                    {
+                        Vector3 point = Vector3.Lerp(a, b, pos / segLen);
+                        float offset = rightSide ? 2.4f : -2.4f;
+                        Vector3 vehiclePos = point + right * offset;
+                        vehiclePos.y = 0f;
+
+                        float yAngle = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+                        if (!rightSide) yAngle += 180f;
+
+                        if (!IsInsideAnyBuilding(vehiclePos, buildingBounds) &&
+                            !WaterBuilder.IsPointInWater(vehiclePos, waterAreas, waterways, 0.5f))
+                        {
+                            GameObject car = CreateProceduralCar(vehiclePos, Quaternion.Euler(0f, yAngle, 0f), shader);
+                            if (car != null)
+                            {
+                                car.transform.SetParent(parent.transform);
+                                count++;
+                            }
+                        }
+                    }
+
+                    rightSide = !rightSide;
+                    pos += spacing;
+                }
+
+                accumulated = segLen - (pos - spacing);
+            }
+
+            return count;
+        }
+
+        // ── Procedural Traffic Signal Generator ──
+        private static Material _sharedSignalPoleMat;
+        private static Material _sharedSignalBoxMat;
+        private static Material _sharedSignalRedMat;
+        private static Material _sharedSignalYellowMat;
+        private static Material _sharedSignalGreenMat;
+
+        private static void EnsureSignalMaterials(Shader shader)
+        {
+            if (_sharedSignalPoleMat != null) return;
+            _sharedSignalPoleMat = new Material(shader);
+            _sharedSignalPoleMat.color = new Color(0.22f, 0.22f, 0.24f);
+
+            _sharedSignalBoxMat = new Material(shader);
+            _sharedSignalBoxMat.color = new Color(0.15f, 0.15f, 0.16f);
+
+            _sharedSignalRedMat = new Material(shader);
+            _sharedSignalRedMat.color = new Color(0.95f, 0.15f, 0.15f);
+            if (_sharedSignalRedMat.HasProperty("_EmissionColor"))
+            {
+                _sharedSignalRedMat.EnableKeyword("_EMISSION");
+                _sharedSignalRedMat.SetColor("_EmissionColor", new Color(0.95f, 0.15f, 0.15f) * 0.8f);
+            }
+
+            _sharedSignalYellowMat = new Material(shader);
+            _sharedSignalYellowMat.color = new Color(0.95f, 0.80f, 0.15f);
+
+            _sharedSignalGreenMat = new Material(shader);
+            _sharedSignalGreenMat.color = new Color(0.15f, 0.90f, 0.25f);
+            if (_sharedSignalGreenMat.HasProperty("_EmissionColor"))
+            {
+                _sharedSignalGreenMat.EnableKeyword("_EMISSION");
+                _sharedSignalGreenMat.SetColor("_EmissionColor", new Color(0.15f, 0.90f, 0.25f) * 0.8f);
+            }
+        }
+
+        private GameObject BuildProceduralTrafficSignal(Vector3 position, Quaternion rotation, Shader shader)
+        {
+            EnsureSignalMaterials(shader);
+            GameObject signal = new GameObject("TrafficSignal");
+            signal.transform.position = position;
+            signal.transform.rotation = rotation;
+
+            // Pole: height 4.2m, 0.12m thick
+            GameObject pole = CreateBoxDirect("Pole", new Vector3(0.12f, 4.2f, 0.12f), _sharedSignalPoleMat);
+            pole.transform.SetParent(signal.transform, false);
+            pole.transform.localPosition = new Vector3(0f, 2.1f, 0f);
+
+            // Signal Box: 0.32m wide, 0.85m high, 0.25m deep
+            GameObject box = CreateBoxDirect("SignalBox", new Vector3(0.32f, 0.85f, 0.25f), _sharedSignalBoxMat);
+            box.transform.SetParent(signal.transform, false);
+            box.transform.localPosition = new Vector3(0f, 3.8f, 0.2f);
+
+            // 3 indicator lights
+            GameObject redLight = CreateBoxDirect("RedLight", new Vector3(0.18f, 0.18f, 0.08f), _sharedSignalRedMat);
+            redLight.transform.SetParent(box.transform, false);
+            redLight.transform.localPosition = new Vector3(0f, 0.24f, 0.14f);
+
+            GameObject yellowLight = CreateBoxDirect("YellowLight", new Vector3(0.18f, 0.18f, 0.08f), _sharedSignalYellowMat);
+            yellowLight.transform.SetParent(box.transform, false);
+            yellowLight.transform.localPosition = new Vector3(0f, 0.0f, 0.14f);
+
+            GameObject greenLight = CreateBoxDirect("GreenLight", new Vector3(0.18f, 0.18f, 0.08f), _sharedSignalGreenMat);
+            greenLight.transform.SetParent(box.transform, false);
+            greenLight.transform.localPosition = new Vector3(0f, -0.24f, 0.14f);
+
+            return signal;
+        }
+
+        private static GameObject CreateBoxDirect(string name, Vector3 size, Material mat)
+        {
+            GameObject go = new GameObject(name);
+            MeshFilter mf = go.AddComponent<MeshFilter>();
+            MeshRenderer mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = mat;
+            float hx = size.x * 0.5f, hy = size.y * 0.5f, hz = size.z * 0.5f;
+
+            Vector3[] verts = new Vector3[24];
+            int[] tris = new int[36];
+
+            // +Y Top
+            verts[0] = new Vector3(-hx, hy, -hz); verts[1] = new Vector3(hx, hy, -hz);
+            verts[2] = new Vector3(hx, hy, hz);   verts[3] = new Vector3(-hx, hy, hz);
+            // -Y Bottom
+            verts[4] = new Vector3(-hx, -hy, hz);  verts[5] = new Vector3(hx, -hy, hz);
+            verts[6] = new Vector3(hx, -hy, -hz); verts[7] = new Vector3(-hx, -hy, -hz);
+            // +Z Front
+            verts[8] = new Vector3(-hx, -hy, hz);  verts[9] = new Vector3(hx, -hy, hz);
+            verts[10] = new Vector3(hx, hy, hz);   verts[11] = new Vector3(-hx, hy, hz);
+            // -Z Back
+            verts[12] = new Vector3(hx, -hy, -hz); verts[13] = new Vector3(-hx, -hy, -hz);
+            verts[14] = new Vector3(-hx, hy, -hz); verts[15] = new Vector3(hx, hy, -hz);
+            // -X Left
+            verts[16] = new Vector3(-hx, -hy, -hz); verts[17] = new Vector3(-hx, -hy, hz);
+            verts[18] = new Vector3(-hx, hy, hz);   verts[19] = new Vector3(-hx, hy, -hz);
+            // +X Right
+            verts[20] = new Vector3(hx, -hy, hz);  verts[21] = new Vector3(hx, -hy, -hz);
+            verts[22] = new Vector3(hx, hy, -hz);  verts[23] = new Vector3(hx, hy, hz);
+
+            for (int f = 0; f < 6; f++)
+            {
+                int vi = f * 4;
+                int ti = f * 6;
+                tris[ti] = vi; tris[ti + 1] = vi + 1; tris[ti + 2] = vi + 2;
+                tris[ti + 3] = vi; tris[ti + 4] = vi + 2; tris[ti + 5] = vi + 3;
+            }
+
+            Mesh m = new Mesh();
+            m.vertices = verts;
+            m.triangles = tris;
+            m.RecalculateNormals();
+            m.RecalculateBounds();
+            mf.sharedMesh = m;
             return go;
         }
     }

@@ -16,7 +16,7 @@ namespace GeoCity3D.Editor
         [MenuItem("GeoCity3D/Setup Demo Scene")]
         public static void Setup()
         {
-            CityController controller = Object.FindObjectOfType<CityController>();
+            CityController controller = Object.FindFirstObjectByType<CityController>();
             if (controller == null)
             {
                 GameObject go = new GameObject("CityController");
@@ -62,8 +62,8 @@ namespace GeoCity3D.Editor
                     }
                 }
                 controller.BuildingPrefabs = buildingModels.ToArray();
-                controller.BuildingGenerationMode = BuildingMode.Prefab;
-                Debug.Log($"DemoSetup: Loaded {controller.BuildingPrefabs.Length} Residential Buildings Set FBX models.");
+                controller.BuildingGenerationMode = BuildingMode.Procedural;
+                Debug.Log($"DemoSetup: Loaded {controller.BuildingPrefabs.Length} Residential Buildings Set FBX models (Default: Procedural mode).");
             }
             else
             {
@@ -170,11 +170,58 @@ namespace GeoCity3D.Editor
             controller.WaterMaterial = CreateSolidMaterial(matPath, "WaterMat", shader,
                 new Color(0.15f, 0.30f, 0.38f), 0.6f);
 
+            // ── Setup Skybox ──
+            Material skyMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/BOXOPHOBIC/Skybox Cubemap Extended/Demo/Materials/Polyverse Skies - Blue Sky.mat");
+            if (skyMat == null)
+                skyMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/GeoCity3D/Materials/Skybox_BlueSky.mat");
+
+            if (skyMat != null)
+            {
+                RenderSettings.skybox = skyMat;
+                RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Skybox;
+                RenderSettings.ambientIntensity = 1.25f;
+                DynamicGI.UpdateEnvironment();
+            }
+
             EditorUtility.SetDirty(controller);
             Selection.activeGameObject = controller.gameObject;
 
             string modeStr = hasSimplePoly ? "SimplePoly City prefabs" : "Procedural (fallback)";
             Debug.Log($"Demo Scene Setup Complete! Mode: {modeStr}. Open 'GeoCity3D > City Generator' to build a city.");
+        }
+
+        [MenuItem("GeoCity3D/Apply Blue Sky Skybox")]
+        public static void ApplyBlueSkySkybox()
+        {
+            string matPath = "Assets/BOXOPHOBIC/Skybox Cubemap Extended/Demo/Materials/Polyverse Skies - Blue Sky.mat";
+            Material skyMat = AssetDatabase.LoadAssetAtPath<Material>(matPath);
+            if (skyMat == null)
+                skyMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/GeoCity3D/Materials/Skybox_BlueSky.mat");
+
+            if (skyMat != null)
+            {
+                RenderSettings.skybox = skyMat;
+                RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Skybox;
+                RenderSettings.ambientIntensity = 1.25f;
+                DynamicGI.UpdateEnvironment();
+
+                Camera mainCam = Camera.main;
+                if (mainCam != null)
+                    mainCam.clearFlags = CameraClearFlags.Skybox;
+
+                var activeScene = UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene();
+                if (activeScene.IsValid())
+                {
+                    UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(activeScene);
+                    UnityEditor.SceneManagement.EditorSceneManager.SaveScene(activeScene);
+                }
+
+                Debug.Log("<color=green>[SKYBOX APPLIED] Polyverse Skies - Blue Sky is now active skybox!</color>");
+            }
+            else
+            {
+                Debug.LogWarning("[SKYBOX] Polyverse Skies - Blue Sky material not found!");
+            }
         }
 
         // ═══════════════════════════════════════════════════════════

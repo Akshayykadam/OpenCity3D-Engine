@@ -31,10 +31,17 @@ namespace GeoCity3D.Geometry
             if (PolygonArea(footprint) < 0)
                 footprint.Reverse();
 
+            // Round corners for sleek, modern, identical procedural structures
+            footprint = RoundFootprintCorners(footprint, 1.8f, 3);
+            if (footprint == null || footprint.Count < 3) return null;
+
+            if (PolygonArea(footprint) < 0)
+                footprint.Reverse();
+
             float height = DetermineHeight(way, area);
-            string buildingType = (way.GetTag("building") ?? "").ToLower();
-            bool isPitchedRoof = ShouldHavePitchedRoof(buildingType, height);
-            bool hasSetback = height > 15f && area > 60f;
+            // Identical structural profile: modern flat roof with uniform parapet & cornice
+            bool isPitchedRoof = false;
+            bool hasSetback = false;
 
             return CreateSolidBuilding(footprint, height, wallMat, roofMat,
                 wallUVOffset, wallUVScale, roofUVOffset, roofUVScale,
@@ -48,6 +55,30 @@ namespace GeoCity3D.Geometry
                 Vector2.zero, Vector2.one,
                 Vector2.zero, Vector2.one,
                 originShifter);
+        }
+
+        /// <summary>
+        /// Directly build a procedural building from an arbitrary 2D/3D polygon footprint with rounded corners.
+        /// </summary>
+        public static GameObject BuildFromFootprint(List<Vector3> rawFootprint, float height,
+            Material wallMat, Material roofMat, long id, float cornerRadius = 1.8f)
+        {
+            if (rawFootprint == null || rawFootprint.Count < 3) return null;
+
+            List<Vector3> footprint = new List<Vector3>(rawFootprint);
+
+            if (PolygonArea(footprint) < 0)
+                footprint.Reverse();
+
+            footprint = RoundFootprintCorners(footprint, cornerRadius, 3);
+            if (footprint == null || footprint.Count < 3) return null;
+
+            if (PolygonArea(footprint) < 0)
+                footprint.Reverse();
+
+            return CreateSolidBuilding(footprint, height, wallMat, roofMat,
+                Vector2.zero, Vector2.one, Vector2.zero, Vector2.one,
+                id, false, false);
         }
 
         // ══════════════════════════════════════════════════════════════
@@ -67,6 +98,7 @@ namespace GeoCity3D.Geometry
             mr.receiveShadows = true;
 
             Mesh mesh = new Mesh();
+            mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32; // Allow large skyscraper meshes (>65k vertices)
             List<Vector3> verts = new List<Vector3>();
             List<Vector2> uvs = new List<Vector2>();
             List<int> wallTris = new List<int>();
@@ -223,6 +255,8 @@ namespace GeoCity3D.Geometry
             float minX, float maxX, float minZ, float maxZ,
             List<Vector3> verts, List<Vector2> uvs, List<int> tris, bool faceDown)
         {
+            if (footprint == null || footprint.Count < 3) return;
+
             float sizeX = Mathf.Max(maxX - minX, 0.01f);
             float sizeZ = Mathf.Max(maxZ - minZ, 0.01f);
 
@@ -242,16 +276,63 @@ namespace GeoCity3D.Geometry
 
             List<int> capTris = GeometryUtils.Triangulate(flatPts);
 
-            if (faceDown)
+            if (capTris != null && capTris.Count >= 3)
             {
-                // Reverse winding for downward-facing cap
-                for (int i = capTris.Count - 1; i >= 0; i--)
-                    tris.Add(baseIdx + capTris[i]);
+                if (faceDown)
+                {
+                    // Reverse winding for downward-facing bottom cap
+                    for (int i = capTris.Count - 1; i >= 0; i--)
+                        tris.Add(baseIdx + capTris[i]);
+                }
+                else
+                {
+                    // Upward-facing top roof cap with double-sided winding guarantee so roof is never culled
+                    for (int i = 0; i < capTris.Count; i += 3)
+                    {
+                        if (i + 2 < capTris.Count)
+                        {
+                            int a = baseIdx + capTris[i];
+                            int b = baseIdx + capTris[i + 1];
+                            int c = baseIdx + capTris[i + 2];
+                            // Primary upward winding
+                            tris.Add(a); tris.Add(b); tris.Add(c);
+                            // Reverse winding guarantee
+                            tris.Add(a); tris.Add(c); tris.Add(b);
+                        }
+                    }
+                }
             }
             else
             {
-                for (int i = 0; i < capTris.Count; i++)
-                    tris.Add(baseIdx + capTris[i]);
+                // Robust centroid fan triangulation fallback: guarantees solid top even on complex or self-intersecting polygons
+                Vector3 center = Vector3.zero;
+                for (int i = 0; i < footprint.Count; i++)
+                    center += footprint[i];
+                center /= footprint.Count;
+                center.y = capY;
+
+                int centerIdx = verts.Count;
+                verts.Add(center);
+                uvs.Add(new Vector2(0.5f, 0.5f));
+
+                for (int i = 0; i < footprint.Count; i++)
+                {
+                    int next = (i + 1) % footprint.Count;
+                    int p0 = centerIdx;
+                    int p1 = baseIdx + i;
+                    int p2 = baseIdx + next;
+
+                    if (faceDown)
+                    {
+                        tris.Add(p0); tris.Add(p2); tris.Add(p1);
+                    }
+                    else
+                    {
+                        // Double-sided fan guarantee
+                        tris.Add(p0); tris.Add(p1); tris.Add(p2);
+                        tris.Add(p0); tris.Add(p2); tris.Add(p1);
+                    }
+                }
             }
         }
 
@@ -374,6 +455,8 @@ namespace GeoCity3D.Geometry
             int floors = Mathf.FloorToInt(totalHeight / floorHeight);
             if (floors < 2) return; // No ledges for single-floor
 
+            Vector3[] miters = ComputeOutwardVertexMiters(footprint, ledgeDepth);
+
             for (int floor = 1; floor < floors; floor++)
             {
                 float ledgeY = baseY + floor * floorHeight;
@@ -382,18 +465,18 @@ namespace GeoCity3D.Geometry
 
                 for (int i = 0; i < footprint.Count; i++)
                 {
+                    int next = (i + 1) % footprint.Count;
                     Vector3 p1 = footprint[i];
-                    Vector3 p2 = footprint[(i + 1) % footprint.Count];
+                    Vector3 p2 = footprint[next];
 
-                    // Wall outward normal (2D) — for CCW footprint
-                    Vector3 wallDir = (p2 - p1).normalized;
-                    Vector3 outward = new Vector3(wallDir.z, 0, -wallDir.x) * ledgeDepth;
+                    Vector3 out1 = miters[i];
+                    Vector3 out2 = miters[next];
 
                     // Outer corners of the ledge
-                    Vector3 ob1 = new Vector3(p1.x, ledgeBot, p1.z) + outward;
-                    Vector3 ob2 = new Vector3(p2.x, ledgeBot, p2.z) + outward;
-                    Vector3 ot1 = new Vector3(p1.x, ledgeTop, p1.z) + outward;
-                    Vector3 ot2 = new Vector3(p2.x, ledgeTop, p2.z) + outward;
+                    Vector3 ob1 = new Vector3(p1.x, ledgeBot, p1.z) + out1;
+                    Vector3 ob2 = new Vector3(p2.x, ledgeBot, p2.z) + out2;
+                    Vector3 ot1 = new Vector3(p1.x, ledgeTop, p1.z) + out1;
+                    Vector3 ot2 = new Vector3(p2.x, ledgeTop, p2.z) + out2;
 
                     // Inner corners (on the wall surface)
                     Vector3 ib1 = new Vector3(p1.x, ledgeBot, p1.z);
@@ -439,18 +522,21 @@ namespace GeoCity3D.Geometry
             float plinthHeight = 0.8f;
             float plinthDepth = 0.1f;
 
+            Vector3[] miters = ComputeOutwardVertexMiters(footprint, plinthDepth);
+
             for (int i = 0; i < footprint.Count; i++)
             {
+                int next = (i + 1) % footprint.Count;
                 Vector3 p1 = footprint[i];
-                Vector3 p2 = footprint[(i + 1) % footprint.Count];
+                Vector3 p2 = footprint[next];
 
-                Vector3 wallDir = (p2 - p1).normalized;
-                Vector3 outward = new Vector3(wallDir.z, 0, -wallDir.x) * plinthDepth;
+                Vector3 out1 = miters[i];
+                Vector3 out2 = miters[next];
 
-                Vector3 ob1 = new Vector3(p1.x, baseY, p1.z) + outward;
-                Vector3 ob2 = new Vector3(p2.x, baseY, p2.z) + outward;
-                Vector3 ot1 = new Vector3(p1.x, baseY + plinthHeight, p1.z) + outward;
-                Vector3 ot2 = new Vector3(p2.x, baseY + plinthHeight, p2.z) + outward;
+                Vector3 ob1 = new Vector3(p1.x, baseY, p1.z) + out1;
+                Vector3 ob2 = new Vector3(p2.x, baseY, p2.z) + out2;
+                Vector3 ot1 = new Vector3(p1.x, baseY + plinthHeight, p1.z) + out1;
+                Vector3 ot2 = new Vector3(p2.x, baseY + plinthHeight, p2.z) + out2;
 
                 // Front face
                 int bi = verts.Count;
@@ -482,22 +568,24 @@ namespace GeoCity3D.Geometry
         {
             float corniceDepth = 0.2f;
             float corniceHeight = 0.3f;
-
             float corniceBot = roofY - corniceHeight;
+
+            Vector3[] miters = ComputeOutwardVertexMiters(footprint, corniceDepth);
 
             for (int i = 0; i < footprint.Count; i++)
             {
+                int next = (i + 1) % footprint.Count;
                 Vector3 p1 = footprint[i];
-                Vector3 p2 = footprint[(i + 1) % footprint.Count];
+                Vector3 p2 = footprint[next];
 
-                Vector3 wallDir = (p2 - p1).normalized;
-                Vector3 outward = new Vector3(wallDir.z, 0, -wallDir.x) * corniceDepth;
+                Vector3 out1 = miters[i];
+                Vector3 out2 = miters[next];
 
                 // Outer overhang corners
-                Vector3 ob1 = new Vector3(p1.x, corniceBot, p1.z) + outward;
-                Vector3 ob2 = new Vector3(p2.x, corniceBot, p2.z) + outward;
-                Vector3 ot1 = new Vector3(p1.x, roofY, p1.z) + outward;
-                Vector3 ot2 = new Vector3(p2.x, roofY, p2.z) + outward;
+                Vector3 ob1 = new Vector3(p1.x, corniceBot, p1.z) + out1;
+                Vector3 ob2 = new Vector3(p2.x, corniceBot, p2.z) + out2;
+                Vector3 ot1 = new Vector3(p1.x, roofY, p1.z) + out1;
+                Vector3 ot2 = new Vector3(p2.x, roofY, p2.z) + out2;
 
                 // Front face of cornice
                 int bi = verts.Count;
@@ -657,7 +745,7 @@ namespace GeoCity3D.Geometry
         {
             float a = 0f;
             for (int i = 0, j = pts.Count - 1; i < pts.Count; j = i++)
-                a += (pts[j].x + pts[i].x) * (pts[j].z - pts[i].z);
+                a += pts[j].x * pts[i].z - pts[i].x * pts[j].z;
             return a * 0.5f;
         }
 
@@ -665,7 +753,7 @@ namespace GeoCity3D.Geometry
         {
             float a = 0f;
             for (int i = 0, j = pts.Count - 1; i < pts.Count; j = i++)
-                a += (pts[j].x + pts[i].x) * (pts[j].z - pts[i].z);
+                a += pts[j].x * pts[i].z - pts[i].x * pts[j].z;
             return a * 0.5f;
         }
 
@@ -753,6 +841,146 @@ namespace GeoCity3D.Geometry
                 if (pts[i].z < minZ) minZ = pts[i].z;
                 if (pts[i].z > maxZ) maxZ = pts[i].z;
             }
+        }
+
+        /// <summary>
+        /// Rounds the corners of a footprint polygon by replacing sharp corners with smooth quadratic Bezier arc vertices.
+        /// Safety clamping prevents corner crossovers and degenerate geometry.
+        /// </summary>
+        public static List<Vector3> RoundFootprintCorners(List<Vector3> footprint, float targetRadius = 1.8f, int arcSegments = 3)
+        {
+            if (footprint == null || footprint.Count < 3) return footprint;
+
+            // 1. Clean near-duplicate vertices
+            List<Vector3> clean = new List<Vector3>();
+            for (int i = 0; i < footprint.Count; i++)
+            {
+                if (clean.Count == 0 || Vector3.Distance(new Vector3(footprint[i].x, 0, footprint[i].z),
+                                                         new Vector3(clean[clean.Count - 1].x, 0, clean[clean.Count - 1].z)) > 0.2f)
+                {
+                    clean.Add(footprint[i]);
+                }
+            }
+            if (clean.Count >= 3 && Vector3.Distance(new Vector3(clean[0].x, 0, clean[0].z),
+                                                     new Vector3(clean[clean.Count - 1].x, 0, clean[clean.Count - 1].z)) <= 0.2f)
+            {
+                clean.RemoveAt(clean.Count - 1);
+            }
+            if (clean.Count < 3) return footprint;
+
+            int n = clean.Count;
+            List<Vector3> result = new List<Vector3>();
+
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 prev = clean[(i - 1 + n) % n];
+                Vector3 curr = clean[i];
+                Vector3 next = clean[(i + 1) % n];
+
+                Vector3 vPrev = new Vector3(prev.x - curr.x, 0, prev.z - curr.z);
+                Vector3 vNext = new Vector3(next.x - curr.x, 0, next.z - curr.z);
+
+                float lenPrev = vPrev.magnitude;
+                float lenNext = vNext.magnitude;
+
+                // If either adjacent edge is very short, keep original corner without rounding
+                if (lenPrev < 0.6f || lenNext < 0.6f)
+                {
+                    result.Add(curr);
+                    continue;
+                }
+
+                Vector3 dirPrev = vPrev / lenPrev;
+                Vector3 dirNext = vNext / lenNext;
+
+                float dot = Vector3.Dot(dirPrev, dirNext);
+
+                // Skip flat lines (angle ~180°) or extreme spikes (angle < 15°)
+                if (dot < -0.98f || dot > 0.96f)
+                {
+                    result.Add(curr);
+                    continue;
+                }
+
+                // Clamped corner offset: max 38% of adjacent edge lengths
+                float s = Mathf.Min(targetRadius, lenPrev * 0.38f, lenNext * 0.38f);
+                if (s < 0.25f)
+                {
+                    result.Add(curr);
+                    continue;
+                }
+
+                Vector3 pStart = curr + dirPrev * s;
+                Vector3 pEnd = curr + dirNext * s;
+                pStart.y = curr.y;
+                pEnd.y = curr.y;
+
+                result.Add(pStart);
+
+                // Quadratic Bezier arc interpolation between pStart and pEnd with control point curr
+                for (int k = 1; k < arcSegments; k++)
+                {
+                    float t = (float)k / arcSegments;
+                    float omt = 1f - t;
+                    Vector3 p = omt * omt * pStart + 2f * omt * t * curr + t * t * pEnd;
+                    p.y = curr.y;
+                    result.Add(p);
+                }
+
+                result.Add(pEnd);
+            }
+
+            // Post-clean duplicate vertices
+            List<Vector3> finalResult = new List<Vector3>();
+            for (int i = 0; i < result.Count; i++)
+            {
+                if (finalResult.Count == 0 || Vector3.Distance(new Vector3(result[i].x, 0, result[i].z),
+                                                               new Vector3(finalResult[finalResult.Count - 1].x, 0, finalResult[finalResult.Count - 1].z)) > 0.1f)
+                {
+                    finalResult.Add(result[i]);
+                }
+            }
+            if (finalResult.Count >= 3 && Vector3.Distance(new Vector3(finalResult[0].x, 0, finalResult[0].z),
+                                                           new Vector3(finalResult[finalResult.Count - 1].x, 0, finalResult[finalResult.Count - 1].z)) <= 0.1f)
+            {
+                finalResult.RemoveAt(finalResult.Count - 1);
+            }
+
+            // Fallback safety check
+            if (finalResult.Count < 3 || Mathf.Abs(PolygonArea2D(finalResult)) < 2f)
+                return footprint;
+
+            return finalResult;
+        }
+
+        private static Vector3[] ComputeOutwardVertexMiters(List<Vector3> footprint, float depth)
+        {
+            int n = footprint.Count;
+            Vector3[] miters = new Vector3[n];
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 prev = footprint[(i - 1 + n) % n];
+                Vector3 curr = footprint[i];
+                Vector3 next = footprint[(i + 1) % n];
+
+                Vector3 d1 = new Vector3(curr.x - prev.x, 0, curr.z - prev.z).normalized;
+                Vector3 d2 = new Vector3(next.x - curr.x, 0, next.z - curr.z).normalized;
+
+                // Outward 2D normals for CCW footprint
+                Vector3 n1 = new Vector3(d1.z, 0, -d1.x);
+                Vector3 n2 = new Vector3(d2.z, 0, -d2.x);
+
+                Vector3 avgN = (n1 + n2).normalized;
+                if (avgN.sqrMagnitude < 0.001f) avgN = n1;
+
+                float cosAngle = Vector3.Dot(avgN, n1);
+                float miterScale = 1f;
+                if (cosAngle > 0.35f)
+                    miterScale = Mathf.Min(1f / cosAngle, 1.4f);
+
+                miters[i] = avgN * (depth * miterScale);
+            }
+            return miters;
         }
     }
 }

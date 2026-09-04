@@ -118,19 +118,27 @@ namespace GeoCity3D.Visuals
             RenderSettings.ambientLight = new Color(0.85f, 0.82f, 0.75f);
             RenderSettings.ambientIntensity = 1.5f;
 
-            // ── Procedural Skybox ──
-            Shader skyShader = Shader.Find("Skybox/Procedural");
-            if (skyShader != null)
+            // ── Skybox ──
+            // Preserve user-assigned skybox (e.g. Polyverse Skies - Blue Sky) if present
+            if (RenderSettings.skybox == null)
             {
-                Material skyMat = new Material(skyShader);
-                skyMat.SetColor("_SkyTint", new Color(0.53f, 0.71f, 1.0f));    // Clean light blue
-                skyMat.SetColor("_GroundColor", new Color(0.85f, 0.85f, 0.80f)); // Light warm horizon
-                skyMat.SetFloat("_Exposure", 1.1f);
-                skyMat.SetFloat("_SunSize", 0.04f);
-                skyMat.SetFloat("_SunSizeConvergence", 8f);
-                skyMat.SetFloat("_AtmosphereThickness", 0.8f);  // Lower = cleaner blue, less yellow
-                RenderSettings.skybox = skyMat;
-                Debug.Log("SceneSetup: Procedural skybox applied.");
+                Shader skyShader = Shader.Find("Skybox/Procedural");
+                if (skyShader != null)
+                {
+                    Material skyMat = new Material(skyShader);
+                    skyMat.SetColor("_SkyTint", new Color(0.53f, 0.71f, 1.0f));    // Clean light blue
+                    skyMat.SetColor("_GroundColor", new Color(0.85f, 0.85f, 0.80f)); // Light warm horizon
+                    skyMat.SetFloat("_Exposure", 1.1f);
+                    skyMat.SetFloat("_SunSize", 0.04f);
+                    skyMat.SetFloat("_SunSizeConvergence", 8f);
+                    skyMat.SetFloat("_AtmosphereThickness", 0.8f);  // Lower = cleaner blue, less yellow
+                    RenderSettings.skybox = skyMat;
+                    Debug.Log("SceneSetup: Procedural skybox applied.");
+                }
+            }
+            else
+            {
+                Debug.Log($"SceneSetup: Preserved active skybox '{RenderSettings.skybox.name}'.");
             }
 
             // ── Distance Fog ──

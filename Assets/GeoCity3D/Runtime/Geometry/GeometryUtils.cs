@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 
 namespace GeoCity3D.Geometry
@@ -25,10 +24,10 @@ namespace GeoCity3D.Geometry
             }
 
             int nv = n;
-            int count = 2 * nv;
+            int count = 3 * nv;
             for (int m = 0, v = nv - 1; nv > 2; )
             {
-                if ((count--) <= 0) return indices;
+                if ((count--) <= 0) break; // Break out to fallback instead of returning partial/empty
 
                 int u = v;
                 if (nv <= u) u = 0;
@@ -49,11 +48,50 @@ namespace GeoCity3D.Geometry
                     m++;
                     for (s = v, t = v + 1; t < nv; s++, t++) V[s] = V[t];
                     nv--;
-                    count = 2 * nv;
+                    count = 3 * nv;
                 }
             }
 
-            indices.Reverse();
+            // If ear clipping completed fully, reverse indices to match Unity winding (Clockwise / Upward normal)
+            if (nv <= 2)
+            {
+                indices.Reverse();
+                return indices;
+            }
+
+            // Fallback: If ear clipping got stuck or produced fewer triangles than needed,
+            // complete the remaining polygon with fan triangulation so no holes occur.
+            if (indices.Count > 0)
+            {
+                // Fan triangulate the remaining nv vertices using the same winding as clipped ears
+                for (int i = 1; i < nv - 1; i++)
+                {
+                    indices.Add(V[0]);
+                    indices.Add(V[i]);
+                    indices.Add(V[i + 1]);
+                }
+                indices.Reverse();
+                return indices;
+            }
+
+            // Complete fallback: simple fan triangulation from vertex 0 with Clockwise winding (Upward normal)
+            int[] order = new int[n];
+            if (Area(points) > 0)
+            {
+                for (int i = 0; i < n; i++) order[i] = i;
+            }
+            else
+            {
+                for (int i = 0; i < n; i++) order[i] = (n - 1) - i;
+            }
+
+            for (int i = 1; i < n - 1; i++)
+            {
+                indices.Add(order[0]);
+                indices.Add(order[i + 1]);
+                indices.Add(order[i]);
+            }
+
             return indices;
         }
 
@@ -88,17 +126,13 @@ namespace GeoCity3D.Geometry
 
         private static bool InsideTriangle(Vector3 A, Vector3 B, Vector3 C, Vector3 P)
         {
-            float ax, az, bx, bz, cx, cz, px, pz;
-            float cCROSSap, bCROSScp, aCROSSbp;
+            // Proper 2D cross-products on the XZ plane:
+            // Point P is inside counter-clockwise triangle ABC iff P is on the left of AB, BC, and CA.
+            float c1 = (B.x - A.x) * (P.z - A.z) - (B.z - A.z) * (P.x - A.x);
+            float c2 = (C.x - B.x) * (P.z - B.z) - (C.z - B.z) * (P.x - B.x);
+            float c3 = (A.x - C.x) * (P.z - C.z) - (A.z - C.z) * (P.x - C.x);
 
-            ax = C.x - B.x; az = C.z - B.z;
-            bx = A.x - C.x; bz = A.z - C.z;
-            cx = B.x - A.x; cz = B.z - A.z;
-            px = P.x - A.x; pz = P.z - A.z;
-
-            return ((ax * pz - az * px) >= 0.0f) &&
-                   ((bx * (P.z - B.z) - bz * (P.x - B.x)) >= 0.0f) &&
-                   ((cx * pz - cz * px) >= 0.0f);
+            return (c1 >= -1e-5f && c2 >= -1e-5f && c3 >= -1e-5f);
         }
 
         // ═══════════════════════════════════════════════
@@ -169,7 +203,12 @@ namespace GeoCity3D.Geometry
                 return new List<Vector3>(points);
 
             // Sort points lexicographically (first by x, then by z)
-            var sortedPoints = points.OrderBy(p => p.x).ThenBy(p => p.z).ToList();
+            List<Vector3> sortedPoints = new List<Vector3>(points);
+            sortedPoints.Sort((a, b) =>
+            {
+                int cmp = a.x.CompareTo(b.x);
+                return cmp != 0 ? cmp : a.z.CompareTo(b.z);
+            });
 
             List<Vector3> hull = new List<Vector3>();
 
@@ -207,6 +246,57 @@ namespace GeoCity3D.Geometry
         private static float Cross(Vector3 o, Vector3 a, Vector3 b)
         {
             return (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+        }
+
+        // ═══════════════════════════════════════════════
+        // 2D POINT-IN-POLYGON & DISTANCE QUERIES
+        // ═══════════════════════════════════════════════
+
+        /// <summary>
+        /// Robust 2D Jordan curve ray-casting test.
+        /// Returns true if the point (x, z) lies strictly inside the 2D polygon in the XZ plane.
+        /// Works for convex, concave, clockwise, or counter-clockwise polygons.
+        /// </summary>
+        public static bool PointInPolygon(float x, float z, List<Vector3> poly)
+        {
+            if (poly == null || poly.Count < 3) return false;
+            bool inside = false;
+            int j = poly.Count - 1;
+            for (int i = 0; i < poly.Count; j = i++)
+            {
+                if (((poly[i].z > z) != (poly[j].z > z)) &&
+                    (x < (poly[j].x - poly[i].x) * (z - poly[i].z) / (poly[j].z - poly[i].z) + poly[i].x))
+                {
+                    inside = !inside;
+                }
+            }
+            return inside;
+        }
+
+        /// <summary>
+        /// Computes the squared 2D distance between a point P and line segment AB in the XZ plane.
+        /// </summary>
+        public static float DistancePointToSegmentSqr2D(Vector3 p, Vector3 a, Vector3 b)
+        {
+            float dx = b.x - a.x;
+            float dz = b.z - a.z;
+            float lenSqr = dx * dx + dz * dz;
+            if (lenSqr < 1e-6f)
+            {
+                float px = p.x - a.x;
+                float pz = p.z - a.z;
+                return px * px + pz * pz;
+            }
+
+            float t = ((p.x - a.x) * dx + (p.z - a.z) * dz) / lenSqr;
+            if (t < 0f) t = 0f;
+            else if (t > 1f) t = 1f;
+
+            float projX = a.x + t * dx;
+            float projZ = a.z + t * dz;
+            float diffX = p.x - projX;
+            float diffZ = p.z - projZ;
+            return diffX * diffX + diffZ * diffZ;
         }
     }
 }

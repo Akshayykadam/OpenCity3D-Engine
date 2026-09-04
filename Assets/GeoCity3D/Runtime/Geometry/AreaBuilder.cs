@@ -38,6 +38,23 @@ namespace GeoCity3D.Geometry
             return CreateSolidArea(polygon, material, way.Id, namePrefix, yOffset);
         }
 
+        public static GameObject Build(List<Vector3> polygon, Material material,
+            long id, string namePrefix, float yOffset = 0.05f)
+        {
+            if (polygon == null || polygon.Count < 3) return null;
+
+            List<Vector3> polyCopy = new List<Vector3>();
+            for (int i = 0; i < polygon.Count; i++)
+                polyCopy.Add(new Vector3(polygon[i].x, yOffset, polygon[i].z));
+
+            if (Vector3.Distance(polyCopy[0], polyCopy[polyCopy.Count - 1]) < 0.1f)
+                polyCopy.RemoveAt(polyCopy.Count - 1);
+
+            if (polyCopy.Count < 3) return null;
+
+            return CreateSolidArea(polyCopy, material, id, namePrefix, yOffset);
+        }
+
         private static GameObject CreateSolidArea(List<Vector3> polygon, Material material,
             long id, string prefix, float surfaceY)
         {

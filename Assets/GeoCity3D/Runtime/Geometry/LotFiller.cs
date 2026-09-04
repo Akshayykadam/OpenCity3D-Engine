@@ -29,7 +29,9 @@ namespace GeoCity3D.Geometry
             GameObject[] bushPrefabs,
             GameObject[] rockPrefabs,
             Transform parent,
-            float cellSize = 8f)
+            float cellSize = 8f,
+            List<WaterAreaInfo> waterAreas = null,
+            List<WaterwayInfo> waterways = null)
         {
             if (treePrefabs == null || treePrefabs.Length == 0) return 0;
 
@@ -65,6 +67,68 @@ namespace GeoCity3D.Geometry
                 }
             }
 
+            // Mark cells occupied by water polygons (lakes, riverbanks, basins)
+            if (waterAreas != null)
+            {
+                foreach (var wa in waterAreas)
+                {
+                    if (wa == null || wa.Polygon == null || wa.Polygon.Count < 3) continue;
+                    int minGX = Mathf.FloorToInt((wa.MinX - startX - cellSize) / cellSize);
+                    int maxGX = Mathf.CeilToInt((wa.MaxX - startX + cellSize) / cellSize);
+                    int minGZ = Mathf.FloorToInt((wa.MinZ - startZ - cellSize) / cellSize);
+                    int maxGZ = Mathf.CeilToInt((wa.MaxZ - startZ + cellSize) / cellSize);
+
+                    minGX = Mathf.Clamp(minGX, 0, gridW - 1);
+                    maxGX = Mathf.Clamp(maxGX, 0, gridW - 1);
+                    minGZ = Mathf.Clamp(minGZ, 0, gridH - 1);
+                    maxGZ = Mathf.Clamp(maxGZ, 0, gridH - 1);
+
+                    for (int gx = minGX; gx <= maxGX; gx++)
+                    {
+                        for (int gz = minGZ; gz <= maxGZ; gz++)
+                        {
+                            if (occupied[gx, gz]) continue;
+                            Vector3 center = new Vector3(startX + (gx + 0.5f) * cellSize, 0f, startZ + (gz + 0.5f) * cellSize);
+                            if (wa.Contains(center, cellSize * 0.75f))
+                            {
+                                occupied[gx, gz] = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Mark cells occupied by linear waterways (rivers, streams, canals)
+            if (waterways != null)
+            {
+                foreach (var ww in waterways)
+                {
+                    if (ww == null || ww.Path == null || ww.Path.Count < 2) continue;
+                    int minGX = Mathf.FloorToInt((ww.MinX - ww.HalfWidth - startX - cellSize) / cellSize);
+                    int maxGX = Mathf.CeilToInt((ww.MaxX + ww.HalfWidth - startX + cellSize) / cellSize);
+                    int minGZ = Mathf.FloorToInt((ww.MinZ - ww.HalfWidth - startZ - cellSize) / cellSize);
+                    int maxGZ = Mathf.CeilToInt((ww.MaxZ + ww.HalfWidth - startZ + cellSize) / cellSize);
+
+                    minGX = Mathf.Clamp(minGX, 0, gridW - 1);
+                    maxGX = Mathf.Clamp(maxGX, 0, gridW - 1);
+                    minGZ = Mathf.Clamp(minGZ, 0, gridH - 1);
+                    maxGZ = Mathf.Clamp(maxGZ, 0, gridH - 1);
+
+                    for (int gx = minGX; gx <= maxGX; gx++)
+                    {
+                        for (int gz = minGZ; gz <= maxGZ; gz++)
+                        {
+                            if (occupied[gx, gz]) continue;
+                            Vector3 center = new Vector3(startX + (gx + 0.5f) * cellSize, 0f, startZ + (gz + 0.5f) * cellSize);
+                            if (ww.Contains(center, cellSize * 0.75f))
+                            {
+                                occupied[gx, gz] = true;
+                            }
+                        }
+                    }
+                }
+            }
+
             // Scan for empty cells and fill them
             for (int gx = 0; gx < gridW; gx++)
             {
@@ -83,6 +147,10 @@ namespace GeoCity3D.Geometry
                     worldZ += Random.Range(-cellSize * 0.3f, cellSize * 0.3f);
 
                     Vector3 pos = new Vector3(worldX, 0f, worldZ);
+
+                    // Absolute guarantee: never place lot fill in water
+                    if (WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 1.2f))
+                        continue;
 
                     // Decide what to place: 75% trees, 15% bushes, 10% rocks
                     float roll = Random.value;
