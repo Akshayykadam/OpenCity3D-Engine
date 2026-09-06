@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Random = UnityEngine.Random;
+using Object = UnityEngine.Object;
 
 namespace GeoCity3D.Geometry
 {
@@ -226,6 +228,84 @@ namespace GeoCity3D.Geometry
                 pos.y -= fb.min.y;
                 obj.transform.position = pos;
             }
+        }
+        /// <summary>
+        /// Scans the city area for empty lots and fills them with procedural meshes (trees and rocks).
+        /// </summary>
+        public static int FillEmptyLotsProcedural(
+            Bounds cityBounds,
+            List<Bounds> buildingBounds,
+            List<Bounds> roadBounds,
+            Shader shader,
+            Transform parent,
+            bool includeTrees = true,
+            bool includeStones = true,
+            float cellSize = 10f,
+            List<WaterAreaInfo> waterAreas = null,
+            List<WaterwayInfo> waterways = null)
+        {
+            if (!includeTrees && !includeStones) return 0;
+
+            int placedCount = 0;
+            float startX = cityBounds.min.x;
+            float startZ = cityBounds.min.z;
+            float endX = cityBounds.max.x;
+            float endZ = cityBounds.max.z;
+
+            int gridW = Mathf.CeilToInt((endX - startX) / cellSize);
+            int gridH = Mathf.CeilToInt((endZ - startZ) / cellSize);
+
+            bool[,] occupied = new bool[gridW, gridH];
+
+            foreach (var b in buildingBounds)
+            {
+                MarkBoundsOnGrid(occupied, b, startX, startZ, cellSize, gridW, gridH);
+            }
+
+            if (roadBounds != null)
+            {
+                foreach (var r in roadBounds)
+                {
+                    MarkBoundsOnGrid(occupied, r, startX, startZ, cellSize, gridW, gridH);
+                }
+            }
+
+            for (int x = 1; x < gridW - 1; x++)
+            {
+                for (int z = 1; z < gridH - 1; z++)
+                {
+                    if (occupied[x, z]) continue;
+                    if (Random.value > 0.40f) continue;
+
+                    float worldX = startX + (x + 0.5f) * cellSize + Random.Range(-cellSize * 0.25f, cellSize * 0.25f);
+                    float worldZ = startZ + (z + 0.5f) * cellSize + Random.Range(-cellSize * 0.25f, cellSize * 0.25f);
+                    Vector3 pos = new Vector3(worldX, 0f, worldZ);
+
+                    if (WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 2.0f))
+                        continue;
+
+                    float roll = Random.value;
+                    GameObject obj = null;
+
+                    if (includeTrees && (!includeStones || roll < 0.75f))
+                    {
+                        obj = TreeBuilder.Build(pos, shader, Random.Range(0.6f, 1.1f));
+                    }
+                    else if (includeStones)
+                    {
+                        obj = RockBuilder.Build(pos, shader, Random.Range(0.6f, 1.3f));
+                    }
+
+                    if (obj != null)
+                    {
+                        obj.name = $"LotFill_Proc_{placedCount}";
+                        obj.transform.SetParent(parent, true);
+                        placedCount++;
+                    }
+                }
+            }
+
+            return placedCount;
         }
     }
 }

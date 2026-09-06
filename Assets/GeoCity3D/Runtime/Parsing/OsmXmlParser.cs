@@ -34,7 +34,18 @@ namespace GeoCity3D.Parsing
                                 {
                                     using (XmlReader inner = reader.ReadSubtree())
                                     {
-                                        while (inner.Read()) {} // Drain it
+                                        while (inner.Read())
+                                        {
+                                            if (inner.NodeType == XmlNodeType.Element && inner.Name == "tag")
+                                            {
+                                                string k = inner.GetAttribute("k");
+                                                string v = inner.GetAttribute("v");
+                                                if (!string.IsNullOrEmpty(k) && !string.IsNullOrEmpty(v))
+                                                {
+                                                    osmNode.AddTag(k, v);
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 data.AddNode(osmNode);
@@ -107,6 +118,9 @@ namespace GeoCity3D.Parsing
 
                 // Assemble multipolygon water relations into synthetic ways
                 AssembleWaterRelations(data);
+
+                // Assemble multipolygon building relations into synthetic ways
+                AssembleBuildingRelations(data);
             }
             catch (Exception e)
             {
@@ -114,6 +128,66 @@ namespace GeoCity3D.Parsing
             }
 
             return data;
+        }
+
+        /// <summary>
+        /// For each multipolygon relation that represents a building or landmark complex
+        /// (e.g. Sydney Opera House, museums, stadiums), chain outer member ways together
+        /// into synthetic OsmWays and inject them into the Ways list with building tags so
+        /// BuildingBuilder generates solid extruded volumetric meshes for them.
+        /// </summary>
+        private void AssembleBuildingRelations(OsmData data)
+        {
+            foreach (var rel in data.Relations)
+            {
+                string relType = (rel.GetTag("type") ?? "").ToLower();
+                if (relType != "multipolygon" && relType != "building") continue;
+
+                // Check if this relation represents a building or building part
+                if (!rel.HasTag("building") && !rel.HasTag("building:part")) continue;
+
+                // Collect outer member ways
+                List<OsmWay> outerWays = new List<OsmWay>();
+                foreach (var member in rel.Members)
+                {
+                    if (member.Type != "way") continue;
+                    // Accept "outer" role or empty role (default = outer)
+                    if (member.Role != "outer" && member.Role != "") continue;
+
+                    if (data.WaysById.TryGetValue(member.Ref, out OsmWay memberWay))
+                    {
+                        outerWays.Add(memberWay);
+                    }
+                }
+
+                if (outerWays.Count == 0) continue;
+
+                // Chain the outer ways into connected rings
+                List<List<long>> rings = ChainWays(outerWays);
+
+                for (int r = 0; r < rings.Count; r++)
+                {
+                    var ring = rings[r];
+                    if (ring.Count < 3) continue;
+
+                    // Create a synthetic way with a unique negative ID
+                    OsmWay syntheticWay = new OsmWay(-rel.Id * 1000 - r);
+                    foreach (long nodeId in ring)
+                        syntheticWay.AddNode(nodeId);
+
+                    // Copy the relation's tags onto the synthetic way
+                    foreach (var kvp in rel.Tags)
+                        syntheticWay.AddTag(kvp.Key, kvp.Value);
+
+                    // Ensure building tag is explicitly set
+                    if (!syntheticWay.HasTag("building"))
+                    {
+                        syntheticWay.AddTag("building", "yes");
+                    }
+
+                    data.AddWay(syntheticWay);
+                }
+            }
         }
 
         /// <summary>

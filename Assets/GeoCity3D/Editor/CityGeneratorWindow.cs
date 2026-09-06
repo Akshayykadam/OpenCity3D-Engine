@@ -31,6 +31,7 @@ namespace GeoCity3D.Editor
         private bool _includeTrees = true;
         private bool _includeStones = true;
         private bool _includeSignals = true;
+        private NatureMode _natureMode = NatureMode.ProceduralMesh;
 
         [MenuItem("GeoCity3D/City Generator")]
         public static void ShowWindow()
@@ -178,6 +179,10 @@ namespace GeoCity3D.Editor
             _includeVehicles = EditorGUILayout.Toggle("Vehicles (Cars)", _includeVehicles);
             _includeTrees = EditorGUILayout.Toggle("Trees & Nature", _includeTrees);
             _includeStones = EditorGUILayout.Toggle("Stones & Rocks", _includeStones);
+            if (_includeTrees || _includeStones)
+            {
+                _natureMode = (NatureMode)EditorGUILayout.EnumPopup("Nature Mode", _natureMode);
+            }
             _includeSignals = EditorGUILayout.Toggle("Signals & Street Lights", _includeSignals);
         }
 
@@ -364,6 +369,8 @@ namespace GeoCity3D.Editor
             waterParent.transform.SetParent(cityRoot.transform);
             GameObject treesParent = new GameObject("Trees");
             treesParent.transform.SetParent(cityRoot.transform);
+            GameObject stonesParent = new GameObject("Stones");
+            stonesParent.transform.SetParent(cityRoot.transform);
             GameObject beachesParent = new GameObject("Beaches");
             beachesParent.transform.SetParent(cityRoot.transform);
             GameObject vehiclesParent = new GameObject("Vehicles");
@@ -375,11 +382,14 @@ namespace GeoCity3D.Editor
             GameObject lotFillParent = new GameObject("LotFill");
             lotFillParent.transform.SetParent(cityRoot.transform);
 
-            int buildingCount = 0, roadCount = 0, parkCount = 0, waterCount = 0, beachCount = 0, treeCount = 0;
+            int buildingCount = 0, roadCount = 0, parkCount = 0, waterCount = 0, beachCount = 0, treeCount = 0, stoneCount = 0;
             int intersectionCount = 0, vehicleCount = 0, propCount = 0, signalCount = 0, lotFillCount = 0;
 
             // Clear intersection data from previous generation
             RoadBuilder.ClearIntersectionData();
+            StreetFurnitureBuilder.ResetMaterialPool();
+            TreeBuilder.ResetMaterialPool();
+            RockBuilder.ResetMaterialPool();
 
             List<Bounds> buildingBounds = new List<Bounds>();
             List<Bounds> roadBounds = new List<Bounds>();
@@ -418,13 +428,15 @@ namespace GeoCity3D.Editor
 
             foreach (var way in data.Ways)
             {
-                if (way.HasTag("building"))
+                if (way.HasTag("building") || way.HasTag("building:part"))
                 {
                     GameObject building = null;
 
+                    bool isLandmarkOrMultipolygon = way.Id < 0 || way.HasTag("building:part");
                     if (_cityController.BuildingGenerationMode == BuildingMode.Prefab
                         && _cityController.BuildingPrefabs != null
-                        && _cityController.BuildingPrefabs.Length > 0)
+                        && _cityController.BuildingPrefabs.Length > 0
+                        && !isLandmarkOrMultipolygon)
                     {
                         // ── PREFAB MODE — Residential Buildings Set (FBX, needs -90° X rotation) ──
                         Vector3 center = Vector3.zero;
@@ -657,23 +669,107 @@ namespace GeoCity3D.Editor
                 }
             }
 
-            // ── Determine if we have SimplePoly prefabs ──
-            bool hasTreePrefabs = _cityController.TreePrefabs != null && _cityController.TreePrefabs.Length > 0;
-            bool hasBushPrefabs = _cityController.BushPrefabs != null && _cityController.BushPrefabs.Length > 0;
-            bool hasRockPrefabs = _cityController.RockPrefabs != null && _cityController.RockPrefabs.Length > 0;
+            // ── Determine generation modes ──
+            bool useProceduralNature = (_natureMode == NatureMode.ProceduralMesh);
+            bool hasTreePrefabs = !useProceduralNature && _cityController.TreePrefabs != null && _cityController.TreePrefabs.Length > 0;
+            bool hasBushPrefabs = !useProceduralNature && _cityController.BushPrefabs != null && _cityController.BushPrefabs.Length > 0;
+            bool hasRockPrefabs = !useProceduralNature && _cityController.RockPrefabs != null && _cityController.RockPrefabs.Length > 0;
             bool hasLightPrefabs = _cityController.StreetLightPrefabs != null && _cityController.StreetLightPrefabs.Length > 0;
             bool hasSignalPrefabs = _cityController.TrafficSignalPrefabs != null && _cityController.TrafficSignalPrefabs.Length > 0;
             bool hasPropPrefabs = _cityController.StreetPropPrefabs != null && _cityController.StreetPropPrefabs.Length > 0;
             bool hasVehiclePrefabs = _cityController.VehiclePrefabs != null && _cityController.VehiclePrefabs.Length > 0;
 
-            // 8. Dense trees in parks
-            // 8. Dense trees and stones in parks
+            int realTreesPlaced = 0;
+            int realRocksPlaced = 0;
+
+            // ── 8a. REAL-WORLD INDIVIDUAL TREES (OSM node[natural=tree]) ──
+            if (_includeTrees && data.TaggedNodes != null)
+            {
+                foreach (var node in data.TaggedNodes)
+                {
+                    if (node.GetTag("natural") != "tree") continue;
+
+                    Vector3 pos = shifter.GetLocalPosition(node.Latitude, node.Longitude);
+                    if (IsInsideAnyBuilding(pos, buildingBounds) ||
+                        WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 1.0f))
+                        continue;
+
+                    GameObject treeObj = hasTreePrefabs
+                        ? TreeBuilder.BuildPrefab(pos, _cityController.TreePrefabs, Random.Range(0.7f, 1.2f))
+                        : TreeBuilder.BuildFromOsm(pos, node, shader);
+
+                    if (treeObj != null)
+                    {
+                        treeObj.transform.SetParent(treesParent.transform);
+                        treeCount++;
+                        realTreesPlaced++;
+                    }
+                }
+            }
+
+            // ── 8b. REAL-WORLD TREE ROWS (OSM way[natural=tree_row]) ──
+            if (_includeTrees)
+            {
+                foreach (var way in data.Ways)
+                {
+                    if (way.GetTag("natural") != "tree_row") continue;
+
+                    for (int i = 0; i < way.NodeIds.Count; i++)
+                    {
+                        if (!data.Nodes.TryGetValue(way.NodeIds[i], out OsmNode node)) continue;
+                        Vector3 pos = shifter.GetLocalPosition(node.Latitude, node.Longitude);
+
+                        if (IsInsideAnyBuilding(pos, buildingBounds) ||
+                            WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 1.0f))
+                            continue;
+
+                        GameObject treeObj = hasTreePrefabs
+                            ? TreeBuilder.BuildPrefab(pos, _cityController.TreePrefabs, Random.Range(0.8f, 1.2f))
+                            : TreeBuilder.Build(pos, shader, Random.Range(0.8f, 1.2f), TreeBuilder.TreeShape.Round);
+
+                        if (treeObj != null)
+                        {
+                            treeObj.transform.SetParent(treesParent.transform);
+                            treeCount++;
+                            realTreesPlaced++;
+                        }
+                    }
+                }
+            }
+
+            // ── 8c. REAL-WORLD ROCKS & BOULDERS (OSM node[natural=rock|bare_rock|stone]) ──
+            if (_includeStones && data.TaggedNodes != null)
+            {
+                foreach (var node in data.TaggedNodes)
+                {
+                    string natural = (node.GetTag("natural") ?? "").ToLower();
+                    if (natural != "rock" && natural != "bare_rock" && natural != "stone") continue;
+
+                    Vector3 pos = shifter.GetLocalPosition(node.Latitude, node.Longitude);
+                    if (IsInsideAnyBuilding(pos, buildingBounds) ||
+                        WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 0.4f))
+                        continue;
+
+                    GameObject rockObj = hasRockPrefabs
+                        ? TreeBuilder.BuildPrefab(pos, _cityController.RockPrefabs, Random.Range(0.6f, 1.5f))
+                        : RockBuilder.BuildFromOsm(pos, node, shader);
+
+                    if (rockObj != null)
+                    {
+                        rockObj.transform.SetParent(stonesParent.transform);
+                        stoneCount++;
+                        realRocksPlaced++;
+                    }
+                }
+            }
+
+            // ── 8d. PARKS & WOODLANDS (Procedural Mesh or Prefab) ──
             if (_includeTrees || _includeStones)
             {
                 for (int i = 0; i < parkCenters.Count; i++)
                 {
                     float parkRadius = Mathf.Max(parkSizes[i] * 0.85f, 8f);
-                    int treeCountInPark = Mathf.Clamp(Mathf.RoundToInt(parkRadius * parkRadius * 0.04f), 8, 80);
+                    int treeCountInPark = Mathf.Clamp(Mathf.RoundToInt(parkRadius * parkRadius * 0.04f), 6, 60);
 
                     if (hasTreePrefabs || hasRockPrefabs)
                     {
@@ -692,34 +788,65 @@ namespace GeoCity3D.Editor
                             }
                             else
                             {
-                                obj.transform.SetParent(treesParent.transform);
-                                treeCount++;
+                                if (obj.name.Contains("Rock") || obj.name.Contains("Stone"))
+                                {
+                                    obj.transform.SetParent(stonesParent.transform);
+                                    stoneCount++;
+                                }
+                                else
+                                {
+                                    obj.transform.SetParent(treesParent.transform);
+                                    treeCount++;
+                                }
                             }
                         }
                     }
-                    else if (_includeTrees)
+                    else
                     {
-                        // Fallback: procedural trees
-                        List<GameObject> parkTrees = TreeBuilder.ScatterTrees(parkCenters[i], parkRadius, treeCountInPark, shader);
-                        foreach (var t in parkTrees)
+                        // Direct procedural mesh generation
+                        if (_includeTrees)
                         {
-                            if (IsInsideAnyBuilding(t.transform.position, buildingBounds) ||
-                                WaterBuilder.IsPointInWater(t.transform.position, waterAreas, waterways, 1.2f))
+                            int parkTreesCount = (realTreesPlaced > 25) ? Mathf.Max(treeCountInPark / 2, 4) : treeCountInPark;
+                            List<GameObject> parkTrees = TreeBuilder.ScatterTrees(parkCenters[i], parkRadius, parkTreesCount, shader);
+                            foreach (var t in parkTrees)
                             {
-                                Object.DestroyImmediate(t);
+                                if (IsInsideAnyBuilding(t.transform.position, buildingBounds) ||
+                                    WaterBuilder.IsPointInWater(t.transform.position, waterAreas, waterways, 1.2f))
+                                {
+                                    Object.DestroyImmediate(t);
+                                }
+                                else
+                                {
+                                    t.transform.SetParent(treesParent.transform);
+                                    treeCount++;
+                                }
                             }
-                            else
+                        }
+
+                        if (_includeStones && (realRocksPlaced == 0 || Random.value < 0.5f))
+                        {
+                            int rockCountInPark = Mathf.Clamp(treeCountInPark / 5, 2, 8);
+                            for (int r = 0; r < rockCountInPark; r++)
                             {
-                                t.transform.SetParent(treesParent.transform);
-                                treeCount++;
+                                float angle = Random.Range(0f, Mathf.PI * 2f);
+                                float dist = Mathf.Sqrt(Random.value) * parkRadius * 0.85f;
+                                Vector3 rPos = parkCenters[i] + new Vector3(Mathf.Cos(angle) * dist, 0, Mathf.Sin(angle) * dist);
+                                if (!IsInsideAnyBuilding(rPos, buildingBounds) &&
+                                    !WaterBuilder.IsPointInWater(rPos, waterAreas, waterways, 0.5f))
+                                {
+                                    GameObject rObj = RockBuilder.Build(rPos, shader, Random.Range(0.6f, 1.4f));
+                                    rObj.transform.SetParent(stonesParent.transform);
+                                    stoneCount++;
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // 9. Street trees along roads
-            if (_includeTrees)
+            // ── 9. STREET TREES ALONG ROADS ──
+            // If few real trees were surveyed, ensure roads have natural avenue greenery
+            if (_includeTrees && realTreesPlaced < 35)
             {
                 foreach (var way in data.Ways)
                 {
@@ -737,12 +864,12 @@ namespace GeoCity3D.Editor
                     for (int i = 0; i < roadPath.Count - 1; i++)
                     {
                         float segLen = Vector3.Distance(roadPath[i], roadPath[i + 1]);
-                        if (segLen < 12f) continue;
+                        if (segLen < 14f) continue;
 
                         Vector3 dir = (roadPath[i + 1] - roadPath[i]).normalized;
                         Vector3 right = Vector3.Cross(Vector3.up, dir).normalized;
 
-                        int treesAlongSeg = Mathf.FloorToInt(segLen / 18f);
+                        int treesAlongSeg = Mathf.FloorToInt(segLen / 20f);
                         for (int t = 0; t < treesAlongSeg; t++)
                         {
                             if (Random.value > 0.5f) continue;
@@ -756,11 +883,9 @@ namespace GeoCity3D.Editor
                             if (!IsInsideAnyBuilding(treePos, buildingBounds) &&
                                 !WaterBuilder.IsPointInWater(treePos, waterAreas, waterways, 1.5f))
                             {
-                                GameObject tree;
-                                if (hasTreePrefabs)
-                                    tree = TreeBuilder.BuildPrefab(treePos, _cityController.TreePrefabs, Random.Range(0.5f, 1.0f));
-                                else
-                                    tree = TreeBuilder.Build(treePos, shader, Random.Range(0.5f, 1.0f));
+                                GameObject tree = hasTreePrefabs
+                                    ? TreeBuilder.BuildPrefab(treePos, _cityController.TreePrefabs, Random.Range(0.5f, 1.0f))
+                                    : TreeBuilder.Build(treePos, shader, Random.Range(0.6f, 1.0f));
 
                                 if (tree != null)
                                 {
@@ -874,20 +999,35 @@ namespace GeoCity3D.Editor
             // 13. Fill empty lots with vegetation (excluding buildings, roads, and all water areas/corridors)
             if (_includeTrees || _includeStones)
             {
-                GameObject[] lotTrees = _includeTrees ? _cityController.TreePrefabs : null;
-                GameObject[] lotBushes = _includeTrees ? _cityController.BushPrefabs : null;
-                GameObject[] lotRocks = _includeStones ? _cityController.RockPrefabs : null;
-
                 Bounds cityBounds = new Bounds(Vector3.zero, Vector3.one * _radius * 2f);
-                lotFillCount = LotFiller.FillEmptyLots(
-                    cityBounds, buildingBounds, roadBounds,
-                    lotTrees,
-                    lotBushes,
-                    lotRocks,
-                    lotFillParent.transform,
-                    8f,
-                    waterAreas,
-                    waterways);
+                if (hasTreePrefabs)
+                {
+                    GameObject[] lotTrees = _includeTrees ? _cityController.TreePrefabs : null;
+                    GameObject[] lotBushes = _includeTrees ? _cityController.BushPrefabs : null;
+                    GameObject[] lotRocks = _includeStones ? _cityController.RockPrefabs : null;
+
+                    lotFillCount = LotFiller.FillEmptyLots(
+                        cityBounds, buildingBounds, roadBounds,
+                        lotTrees,
+                        lotBushes,
+                        lotRocks,
+                        lotFillParent.transform,
+                        8f,
+                        waterAreas,
+                        waterways);
+                }
+                else
+                {
+                    lotFillCount = LotFiller.FillEmptyLotsProcedural(
+                        cityBounds, buildingBounds, roadBounds,
+                        shader,
+                        lotFillParent.transform,
+                        _includeTrees,
+                        _includeStones,
+                        10f,
+                        waterAreas,
+                        waterways);
+                }
                 Debug.Log($"Lot Fill: placed {lotFillCount} vegetation objects in empty spaces.");
             }
 
@@ -902,6 +1042,8 @@ namespace GeoCity3D.Editor
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(waterParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(beachesParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(treesParent);
+            if (stonesParent.transform.childCount > 0)
+                GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(stonesParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(lightsParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(vehiclesParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(propsParent);
@@ -913,6 +1055,7 @@ namespace GeoCity3D.Editor
             SetStaticFlags(buildingsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccluderStatic | StaticEditorFlags.OccludeeStatic | StaticEditorFlags.ContributeGI);
             // Smaller objects: occludee only (hidden by buildings, but don't block others)
             SetStaticFlags(treesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(stonesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(lightsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(vehiclesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(propsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
@@ -925,7 +1068,7 @@ namespace GeoCity3D.Editor
             SetStaticFlags(waterParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(beachesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
 
-            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}, StreetLights: {streetLightCount}, Vehicles: {vehicleCount}, Props: {propCount}, TrafficSignals: {signalCount}, LotFill: {lotFillCount}");
+            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}, Stones: {stoneCount}, StreetLights: {streetLightCount}, Vehicles: {vehicleCount}, Props: {propCount}, TrafficSignals: {signalCount}, LotFill: {lotFillCount}");
             _isGenerating = false;
         }
 
@@ -1316,6 +1459,7 @@ namespace GeoCity3D.Editor
             RoadBuilder.ClearIntersectionData();
             StreetFurnitureBuilder.ResetMaterialPool();
             TreeBuilder.ResetMaterialPool();
+            RockBuilder.ResetMaterialPool();
             _sharedCarMaterials = null;
             _proceduralRockMat = null;
             _sharedSignalPoleMat = null;
@@ -1907,16 +2051,7 @@ namespace GeoCity3D.Editor
 
         private GameObject BuildProceduralRock(Vector3 position, float scale, Shader shader)
         {
-            GameObject rock = new GameObject("ProceduralRock");
-            rock.transform.position = position;
-            rock.transform.rotation = Quaternion.Euler(Random.Range(-10f, 10f), Random.Range(0f, 360f), Random.Range(-10f, 10f));
-            rock.transform.localScale = new Vector3(scale * Random.Range(0.85f, 1.25f), scale * Random.Range(0.6f, 0.9f), scale * Random.Range(0.85f, 1.25f));
-
-            MeshFilter mf = rock.AddComponent<MeshFilter>();
-            MeshRenderer mr = rock.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = GetProceduralRockMaterial(shader);
-            mf.sharedMesh = CreateProceduralRockMesh();
-            return rock;
+            return RockBuilder.Build(position, shader, scale);
         }
 
         // ── Procedural Low-Poly Car Generator ──

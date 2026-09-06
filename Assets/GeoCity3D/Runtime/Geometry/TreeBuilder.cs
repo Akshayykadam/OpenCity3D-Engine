@@ -1,5 +1,9 @@
 using System.Collections.Generic;
+using System.Globalization;
+using GeoCity3D.Data;
 using UnityEngine;
+using Random = UnityEngine.Random;
+using Object = UnityEngine.Object;
 
 namespace GeoCity3D.Geometry
 {
@@ -28,7 +32,7 @@ namespace GeoCity3D.Geometry
         private static Material _sharedTrunkMat;
         private static Material[] _sharedCanopyMats;
 
-        private enum TreeShape { Round, Conical, Spreading }
+        public enum TreeShape { Round, Conical, Spreading }
 
         private static void EnsureMaterialPool(Shader shader)
         {
@@ -73,7 +77,10 @@ namespace GeoCity3D.Geometry
             return Build(position, shader, scale, shape);
         }
 
-        private static GameObject Build(Vector3 position, Shader shader, float scale, TreeShape shape)
+        /// <summary>
+        /// Builds a procedural tree with a specified shape variant.
+        /// </summary>
+        public static GameObject Build(Vector3 position, Shader shader, float scale, TreeShape shape)
         {
             EnsureMaterialPool(shader);
 
@@ -98,6 +105,63 @@ namespace GeoCity3D.Geometry
             }
 
             return tree;
+        }
+
+        /// <summary>
+        /// Builds a procedural tree based on real OpenStreetMap node tags.
+        /// Interprets leaf_type, species, height, and diameter_crown.
+        /// </summary>
+        public static GameObject BuildFromOsm(Vector3 position, OsmNode node, Shader shader)
+        {
+            float scale = 1.0f;
+
+            if (node.HasTag("height"))
+            {
+                string rawH = node.GetTag("height").Trim().ToLower().Replace("m", "").Trim();
+                if (float.TryParse(rawH, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsedH))
+                {
+                    scale = Mathf.Clamp(parsedH / 5.0f, 0.4f, 3.5f);
+                }
+            }
+            else if (node.HasTag("diameter_crown") || node.HasTag("crown_diameter"))
+            {
+                string rawD = (node.GetTag("diameter_crown") ?? node.GetTag("crown_diameter")).Trim().ToLower().Replace("m", "").Trim();
+                if (float.TryParse(rawD, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsedD))
+                {
+                    scale = Mathf.Clamp(parsedD / 4.0f, 0.4f, 3.0f);
+                }
+            }
+            else
+            {
+                scale = Random.Range(0.7f, 1.3f);
+            }
+
+            TreeShape shape = TreeShape.Round;
+            string leafType = (node.GetTag("leaf_type") ?? "").ToLower();
+            string genus = (node.GetTag("genus") ?? node.GetTag("species") ?? "").ToLower();
+
+            if (leafType == "needleleaved" || leafType == "conifer" ||
+                genus.Contains("pinus") || genus.Contains("picea") || genus.Contains("abies") ||
+                genus.Contains("cedrus") || genus.Contains("cypress") || genus.Contains("cupressus"))
+            {
+                shape = TreeShape.Conical;
+            }
+            else if (genus.Contains("palm") || genus.Contains("ficus") || genus.Contains("banyan") ||
+                     genus.Contains("platanus") || genus.Contains("acacia"))
+            {
+                shape = TreeShape.Spreading;
+            }
+            else if (leafType == "broadleaved")
+            {
+                shape = TreeShape.Round;
+            }
+            else
+            {
+                float r = Random.value;
+                shape = r < 0.55f ? TreeShape.Round : (r < 0.80f ? TreeShape.Conical : TreeShape.Spreading);
+            }
+
+            return Build(position, shader, scale, shape);
         }
 
         // ═══════════════════════════════════════════════

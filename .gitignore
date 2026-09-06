@@ -76,3 +76,7 @@ crashlytics-build.properties
 ehthumbs.db
 Thumbs.db
 Desktop.ini
+
+# Generated scene files (prevent large YAML mesh bloat)
+Assets/GeoCity3D/Scene/
+

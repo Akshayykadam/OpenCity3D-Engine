@@ -8,11 +8,20 @@ namespace GeoCity3D
         Prefab       // FBX models scaled to fit lots
     }
 
+    public enum NatureMode
+    {
+        ProceduralMesh,  // Direct custom procedural meshes from real GIS data
+        Prefab           // FBX prefab models
+    }
+
     public class CityController : MonoBehaviour
     {
-        [Header("Generation Mode")]
+        [Header("Generation Modes")]
         [Tooltip("Procedural = exact footprint geometry with solid colors. Prefab = FBX models scaled to fit.")]
         public BuildingMode BuildingGenerationMode = BuildingMode.Procedural;
+
+        [Tooltip("ProceduralMesh = generates custom low-poly tree & rock meshes directly from real GIS data. Prefab = uses assigned prefab models.")]
+        public NatureMode NatureGenerationMode = NatureMode.ProceduralMesh;
 
         [Header("Building Models (Prefab Mode)")]
         public GameObject[] BuildingPrefabs;

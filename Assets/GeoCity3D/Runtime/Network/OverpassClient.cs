@@ -86,12 +86,20 @@ namespace GeoCity3D.Network
             // Increased timeout and memory limit for massive 3000m cities
             return $"[out:xml][timeout:180][maxsize:1073741824];" +
                    $"(" +
-                   // Buildings & roads
+                   // Buildings & roads (ways and multipolygon landmark relations)
                    $"way[\"building\"](around:{radius},{lat},{lon});" +
+                   $"relation[\"building\"](around:{radius},{lat},{lon});" +
+                   $"way[\"building:part\"](around:{radius},{lat},{lon});" +
+                   $"relation[\"building:part\"](around:{radius},{lat},{lon});" +
                    $"way[\"highway\"](around:{radius},{lat},{lon});" +
                    // Parks & green areas
                    $"way[\"landuse\"~\"park|grass|forest|meadow|reservoir|basin\"](around:{radius},{lat},{lon});" +
                    $"way[\"leisure\"~\"park|garden\"](around:{radius},{lat},{lon});" +
+                   // Real nature: individual trees, tree rows, woods, rocks, boulders
+                   $"node[\"natural\"=\"tree\"](around:{radius},{lat},{lon});" +
+                   $"node[\"natural\"~\"rock|bare_rock|stone\"](around:{radius},{lat},{lon});" +
+                   $"way[\"natural\"=\"tree_row\"](around:{radius},{lat},{lon});" +
+                   $"way[\"natural\"~\"wood|scrub|bare_rock|scree\"](around:{radius},{lat},{lon});" +
                    // Water areas (closed polygons)
                    $"way[\"natural\"~\"water|bay|wetland|coastline|beach\"](around:{radius},{lat},{lon});" +
                    $"way[\"waterway\"~\"riverbank|dock|boatyard\"](around:{radius},{lat},{lon});" +
@@ -114,7 +122,7 @@ namespace GeoCity3D.Network
 
 
         /// <summary>
-        /// Fallback: even more focused query (buildings, roads, basic water/parks) if the full query times out.
+        /// Fallback: even more focused query (buildings, roads, basic water/parks/nature) if the full query times out.
         /// Omits slow regex filtering to speed up the Overpass DB search.
         /// </summary>
         private string BuildFocusedQuery(double lat, double lon, double radius)
@@ -122,6 +130,8 @@ namespace GeoCity3D.Network
             return $"[out:xml][timeout:180][maxsize:1073741824];" +
                    $"(" +
                    $"way[\"building\"](around:{radius},{lat},{lon});" +
+                   $"relation[\"building\"](around:{radius},{lat},{lon});" +
+                   $"way[\"building:part\"](around:{radius},{lat},{lon});" +
                    $"way[\"highway\"](around:{radius},{lat},{lon});" +
                    // Basic water and parks without slow regex operators
                    $"way[\"water\"](around:{radius},{lat},{lon});" +
@@ -129,6 +139,10 @@ namespace GeoCity3D.Network
                    $"way[\"natural\"=\"water\"](around:{radius},{lat},{lon});" +
                    $"relation[\"natural\"=\"water\"](around:{radius},{lat},{lon});" +
                    $"way[\"leisure\"=\"park\"](around:{radius},{lat},{lon});" +
+                   // Basic nature features
+                   $"node[\"natural\"=\"tree\"](around:{radius},{lat},{lon});" +
+                   $"node[\"natural\"=\"rock\"](around:{radius},{lat},{lon});" +
+                   $"way[\"natural\"=\"tree_row\"](around:{radius},{lat},{lon});" +
                    $");" +
                    $"out body;>;out skel qt;";
         }

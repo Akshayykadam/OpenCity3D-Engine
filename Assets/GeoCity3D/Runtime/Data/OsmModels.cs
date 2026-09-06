@@ -7,12 +7,34 @@ namespace GeoCity3D.Data
         public long Id;
         public double Latitude;
         public double Longitude;
+        public Dictionary<string, string> Tags;
 
         public OsmNode(long id, double lat, double lon)
         {
             Id = id;
             Latitude = lat;
             Longitude = lon;
+            Tags = null;
+        }
+
+        public void AddTag(string key, string value)
+        {
+            if (Tags == null)
+            {
+                Tags = new Dictionary<string, string>();
+            }
+            Tags[key] = value;
+        }
+
+        public bool HasTag(string key)
+        {
+            return Tags != null && Tags.ContainsKey(key);
+        }
+
+        public string GetTag(string key)
+        {
+            if (Tags == null) return null;
+            return Tags.TryGetValue(key, out string value) ? value : null;
         }
     }
 
@@ -87,15 +109,21 @@ namespace GeoCity3D.Data
             Tags[key] = value;
         }
 
+        public bool HasTag(string key)
+        {
+            return Tags != null && Tags.ContainsKey(key);
+        }
+
         public string GetTag(string key)
         {
-            return Tags.ContainsKey(key) ? Tags[key] : null;
+            return (Tags != null && Tags.TryGetValue(key, out string val)) ? val : null;
         }
     }
 
     public class OsmData
     {
         public Dictionary<long, OsmNode> Nodes;
+        public List<OsmNode> TaggedNodes;
         public List<OsmWay> Ways;
         public Dictionary<long, OsmWay> WaysById;
         public List<OsmRelation> Relations;
@@ -103,6 +131,7 @@ namespace GeoCity3D.Data
         public OsmData()
         {
             Nodes = new Dictionary<long, OsmNode>();
+            TaggedNodes = new List<OsmNode>();
             Ways = new List<OsmWay>();
             WaysById = new Dictionary<long, OsmWay>();
             Relations = new List<OsmRelation>();
@@ -111,6 +140,10 @@ namespace GeoCity3D.Data
         public void AddNode(OsmNode node)
         {
             Nodes[node.Id] = node;
+            if (node.Tags != null && node.Tags.Count > 0)
+            {
+                TaggedNodes.Add(node);
+            }
         }
 
         public void AddWay(OsmWay way)

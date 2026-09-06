@@ -23,7 +23,11 @@ namespace GeoCity3D.Visuals
         {
             // Reuse existing directional light or create one
             Light sun = null;
+#if UNITY_2023_1_OR_NEWER
+            Light[] allLights = Object.FindObjectsByType<Light>(FindObjectsSortMode.None);
+#else
             Light[] allLights = Object.FindObjectsOfType<Light>();
+#endif
             foreach (var l in allLights)
             {
                 if (l.type == LightType.Directional)
