@@ -1,55 +1,122 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using GeoCity3D.Data;
+using GeoCity3D.Visuals;
 using UnityEngine;
+using UnityEngine.Rendering;
 using Random = UnityEngine.Random;
 using Object = UnityEngine.Object;
 
 namespace GeoCity3D.Geometry
 {
     /// <summary>
-    /// Generates diverse, natural-looking trees with 3 shape variants:
-    /// Round (deciduous), Conical (pine/cypress), and Spreading (banyan/wide canopy).
-    /// Each variant has textured canopy and bark-colored trunk.
+    /// Generates botanically realistic procedural 3D trees with natural wood anatomy:
+    /// - Root flares and fluting at ground level.
+    /// - Organic curved trunks with visible primary scaffold branches.
+    /// - Compound multi-cluster foliage clouds with 3D noise displacement.
+    /// - Spherical botanical normals for lush, soft volume shading.
+    /// - Procedural bark and foliage textures with normal maps.
+    /// - Full shadow casting and receiving.
+    /// 
+    /// Supports 4 species archetypes:
+    /// Round (Oak/Maple broadleaf), Conical (Pine/Spruce/Fir),
+    /// Spreading (Acacia/Banyan/Park umbrella), and Columnar (Birch/Poplar/Boulevard).
     /// </summary>
     public static class TreeBuilder
     {
         private static readonly Color[] CanopyColors = new Color[]
         {
-            new Color(0.08f, 0.30f, 0.06f),   // Deep green
-            new Color(0.12f, 0.35f, 0.08f),   // Forest green
-            new Color(0.06f, 0.28f, 0.05f),   // Dark green
-            new Color(0.15f, 0.38f, 0.10f),   // Olive green
-            new Color(0.10f, 0.32f, 0.12f),   // Rich green
+            new Color(0.13f, 0.38f, 0.10f),   // Lush Forest Green
+            new Color(0.18f, 0.44f, 0.12f),   // Summer Green
+            new Color(0.22f, 0.42f, 0.14f),   // Olive Green
+            new Color(0.09f, 0.30f, 0.08f),   // Deep Evergreen / Pine
+            new Color(0.16f, 0.48f, 0.16f),   // Vibrant Spring Green
+            new Color(0.26f, 0.43f, 0.14f),   // Warm Golden-Green
+            new Color(0.11f, 0.34f, 0.12f),   // Rich Elm Green
         };
 
-        private static readonly Color TrunkColor = new Color(0.28f, 0.20f, 0.12f);
-        private static readonly Color BarkDark = new Color(0.18f, 0.13f, 0.08f);
+        private static readonly Color TrunkColor = new Color(0.32f, 0.24f, 0.16f);
 
-        // ── SHARED MATERIAL POOL (critical for batching!) ──
-        // Without this, every tree gets a unique Material instance and CityCombiner
-        // can never group them. This single change eliminates ~20,000 draw calls.
+        // ── SHARED MATERIAL POOL (critical for batching in CityCombiner) ──
         private static Material _sharedTrunkMat;
         private static Material[] _sharedCanopyMats;
 
-        public enum TreeShape { Round, Conical, Spreading }
+        // Cached procedural textures
+        private static Texture2D _cachedBarkTex;
+        private static Texture2D _cachedBarkNorm;
+        private static Texture2D _cachedFoliageNorm;
+        private static Texture2D[] _cachedFoliageTexs;
+
+        public enum TreeShape { Round, Conical, Spreading, Columnar }
+
+        private struct Branch
+        {
+            public Vector3 start;
+            public Vector3 end;
+            public float radiusStart;
+            public float radiusEnd;
+        }
+
+        private struct FoliageCluster
+        {
+            public Vector3 center;
+            public Vector3 scale;
+            public float radius;
+            public float seed;
+        }
 
         private static void EnsureMaterialPool(Shader shader)
         {
             if (_sharedTrunkMat != null) return;
 
+            // Generate bark textures
+            if (_cachedBarkTex == null) _cachedBarkTex = TextureGenerator.CreateBarkTexture(256, 512);
+            if (_cachedBarkNorm == null) _cachedBarkNorm = TextureGenerator.CreateBarkNormalMap(256, 512);
+
             _sharedTrunkMat = new Material(shader);
+            _sharedTrunkMat.name = "Tree_Trunk_Shared";
             _sharedTrunkMat.color = TrunkColor;
-            if (_sharedTrunkMat.HasProperty("_Smoothness")) _sharedTrunkMat.SetFloat("_Smoothness", 0.1f);
-            if (_sharedTrunkMat.HasProperty("_Glossiness")) _sharedTrunkMat.SetFloat("_Glossiness", 0.1f);
+            if (_sharedTrunkMat.HasProperty("_BaseColor")) _sharedTrunkMat.SetColor("_BaseColor", TrunkColor);
+            if (_sharedTrunkMat.HasProperty("_MainTex") && _cachedBarkTex != null) _sharedTrunkMat.SetTexture("_MainTex", _cachedBarkTex);
+            if (_sharedTrunkMat.HasProperty("_BaseMap") && _cachedBarkTex != null) _sharedTrunkMat.SetTexture("_BaseMap", _cachedBarkTex);
+            if (_sharedTrunkMat.HasProperty("_BumpMap") && _cachedBarkNorm != null)
+            {
+                _sharedTrunkMat.SetTexture("_BumpMap", _cachedBarkNorm);
+                _sharedTrunkMat.EnableKeyword("_NORMALMAP");
+                _sharedTrunkMat.SetFloat("_BumpScale", 1.2f);
+            }
+            if (_sharedTrunkMat.HasProperty("_Smoothness")) _sharedTrunkMat.SetFloat("_Smoothness", 0.15f);
+            if (_sharedTrunkMat.HasProperty("_Glossiness")) _sharedTrunkMat.SetFloat("_Glossiness", 0.15f);
+            _sharedTrunkMat.enableInstancing = true;
+
+            // Generate foliage normal map (shared across all foliage shades)
+            if (_cachedFoliageNorm == null) _cachedFoliageNorm = TextureGenerator.CreateFoliageNormalMap(256, 256);
 
             _sharedCanopyMats = new Material[CanopyColors.Length];
+            if (_cachedFoliageTexs == null || _cachedFoliageTexs.Length != CanopyColors.Length)
+                _cachedFoliageTexs = new Texture2D[CanopyColors.Length];
+
             for (int i = 0; i < CanopyColors.Length; i++)
             {
+                if (_cachedFoliageTexs[i] == null)
+                    _cachedFoliageTexs[i] = TextureGenerator.CreateFoliageTexture(256, 256, CanopyColors[i]);
+
                 _sharedCanopyMats[i] = new Material(shader);
+                _sharedCanopyMats[i].name = $"Tree_Canopy_{i}";
                 _sharedCanopyMats[i].color = CanopyColors[i];
-                if (_sharedCanopyMats[i].HasProperty("_Smoothness")) _sharedCanopyMats[i].SetFloat("_Smoothness", 0.0f);
-                if (_sharedCanopyMats[i].HasProperty("_Glossiness")) _sharedCanopyMats[i].SetFloat("_Glossiness", 0.0f);
+                if (_sharedCanopyMats[i].HasProperty("_BaseColor")) _sharedCanopyMats[i].SetColor("_BaseColor", CanopyColors[i]);
+                if (_sharedCanopyMats[i].HasProperty("_MainTex") && _cachedFoliageTexs[i] != null) _sharedCanopyMats[i].SetTexture("_MainTex", _cachedFoliageTexs[i]);
+                if (_sharedCanopyMats[i].HasProperty("_BaseMap") && _cachedFoliageTexs[i] != null) _sharedCanopyMats[i].SetTexture("_BaseMap", _cachedFoliageTexs[i]);
+                if (_sharedCanopyMats[i].HasProperty("_BumpMap") && _cachedFoliageNorm != null)
+                {
+                    _sharedCanopyMats[i].SetTexture("_BumpMap", _cachedFoliageNorm);
+                    _sharedCanopyMats[i].EnableKeyword("_NORMALMAP");
+                    _sharedCanopyMats[i].SetFloat("_BumpScale", 1.0f);
+                }
+                if (_sharedCanopyMats[i].HasProperty("_Smoothness")) _sharedCanopyMats[i].SetFloat("_Smoothness", 0.05f);
+                if (_sharedCanopyMats[i].HasProperty("_Glossiness")) _sharedCanopyMats[i].SetFloat("_Glossiness", 0.05f);
+                _sharedCanopyMats[i].enableInstancing = true;
             }
         }
 
@@ -67,11 +134,11 @@ namespace GeoCity3D.Geometry
         /// </summary>
         public static GameObject Build(Vector3 position, Shader shader, float scale = 1f)
         {
-            // Random shape selection
-            TreeShape shape;
             float r = Random.value;
-            if (r < 0.50f) shape = TreeShape.Round;
-            else if (r < 0.75f) shape = TreeShape.Conical;
+            TreeShape shape;
+            if (r < 0.45f) shape = TreeShape.Round;
+            else if (r < 0.70f) shape = TreeShape.Conical;
+            else if (r < 0.88f) shape = TreeShape.Columnar;
             else shape = TreeShape.Spreading;
 
             return Build(position, shader, scale, shape);
@@ -87,7 +154,6 @@ namespace GeoCity3D.Geometry
             GameObject tree = new GameObject("Tree");
             tree.transform.position = position;
 
-            // Pick from the shared pool — all trees with same canopy color share the SAME material instance
             Material trunkMat = _sharedTrunkMat;
             Material canopyMat = _sharedCanopyMats[Random.Range(0, _sharedCanopyMats.Length)];
 
@@ -98,6 +164,9 @@ namespace GeoCity3D.Geometry
                     break;
                 case TreeShape.Conical:
                     BuildConicalTree(tree, trunkMat, canopyMat, scale);
+                    break;
+                case TreeShape.Columnar:
+                    BuildColumnarTree(tree, trunkMat, canopyMat, scale);
                     break;
                 case TreeShape.Spreading:
                     BuildSpreadingTree(tree, trunkMat, canopyMat, scale);
@@ -120,7 +189,7 @@ namespace GeoCity3D.Geometry
                 string rawH = node.GetTag("height").Trim().ToLower().Replace("m", "").Trim();
                 if (float.TryParse(rawH, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsedH))
                 {
-                    scale = Mathf.Clamp(parsedH / 5.0f, 0.4f, 3.5f);
+                    scale = Mathf.Clamp(parsedH / 6.0f, 0.5f, 3.0f);
                 }
             }
             else if (node.HasTag("diameter_crown") || node.HasTag("crown_diameter"))
@@ -128,12 +197,12 @@ namespace GeoCity3D.Geometry
                 string rawD = (node.GetTag("diameter_crown") ?? node.GetTag("crown_diameter")).Trim().ToLower().Replace("m", "").Trim();
                 if (float.TryParse(rawD, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsedD))
                 {
-                    scale = Mathf.Clamp(parsedD / 4.0f, 0.4f, 3.0f);
+                    scale = Mathf.Clamp(parsedD / 5.0f, 0.5f, 3.0f);
                 }
             }
             else
             {
-                scale = Random.Range(0.7f, 1.3f);
+                scale = Random.Range(0.75f, 1.35f);
             }
 
             TreeShape shape = TreeShape.Round;
@@ -142,125 +211,624 @@ namespace GeoCity3D.Geometry
 
             if (leafType == "needleleaved" || leafType == "conifer" ||
                 genus.Contains("pinus") || genus.Contains("picea") || genus.Contains("abies") ||
-                genus.Contains("cedrus") || genus.Contains("cypress") || genus.Contains("cupressus"))
+                genus.Contains("cedrus") || genus.Contains("larix") || genus.Contains("taxus"))
             {
                 shape = TreeShape.Conical;
             }
+            else if (genus.Contains("cupressus") || genus.Contains("populus") || genus.Contains("betula") ||
+                     genus.Contains("fastigiata") || genus.Contains("columnar"))
+            {
+                shape = TreeShape.Columnar;
+            }
             else if (genus.Contains("palm") || genus.Contains("ficus") || genus.Contains("banyan") ||
-                     genus.Contains("platanus") || genus.Contains("acacia"))
+                     genus.Contains("platanus") || genus.Contains("acacia") || genus.Contains("albizia"))
             {
                 shape = TreeShape.Spreading;
             }
-            else if (leafType == "broadleaved")
+            else if (leafType == "broadleaved" || genus.Contains("quercus") || genus.Contains("acer") || genus.Contains("ulmus"))
             {
                 shape = TreeShape.Round;
             }
             else
             {
                 float r = Random.value;
-                shape = r < 0.55f ? TreeShape.Round : (r < 0.80f ? TreeShape.Conical : TreeShape.Spreading);
+                if (r < 0.45f) shape = TreeShape.Round;
+                else if (r < 0.70f) shape = TreeShape.Conical;
+                else if (r < 0.88f) shape = TreeShape.Columnar;
+                else shape = TreeShape.Spreading;
             }
 
             return Build(position, shader, scale, shape);
         }
 
         // ═══════════════════════════════════════════════
-        //  ROUND TREE — classic deciduous (sphere canopy)
+        //  1. ROUND TREE — Classic Deciduous / Oak
         // ═══════════════════════════════════════════════
 
         private static void BuildRoundTree(GameObject tree, Material trunkMat, Material canopyMat, float scale)
         {
-            float trunkRadius = 0.15f * scale;
-            float trunkHeight = Random.Range(2.0f, 4.0f) * scale;
-            float canopyRadius = Random.Range(2.5f, 4.5f) * scale;
+            float trunkHeight = Random.Range(3.4f, 4.6f) * scale;
+            float baseRadius = Random.Range(0.24f, 0.32f) * scale;
+            float topRadius = baseRadius * 0.65f;
+            float rootFlare = 1.65f;
 
-            // Trunk
-            GameObject trunk = CreateTaperedCylinder("Trunk", trunkRadius, trunkRadius * 0.6f,
-                trunkHeight, 8, trunkMat);
-            trunk.transform.SetParent(tree.transform, false);
+            Vector2 trunkCurve = new Vector2(
+                Random.Range(-0.35f, 0.35f) * scale,
+                Random.Range(-0.35f, 0.35f) * scale);
 
-            // Main canopy (slightly squished sphere)
-            GameObject canopy = CreateSphere("Canopy", canopyRadius, 6, 5, canopyMat);
-            canopy.transform.SetParent(tree.transform, false);
-            canopy.transform.localPosition = new Vector3(0f, trunkHeight + canopyRadius * 0.5f, 0f);
-            canopy.transform.localScale = new Vector3(1f, 0.85f, 1f); // Slightly flat
+            // Scaffold branches
+            List<Branch> branches = new List<Branch>();
+            int branchCount = Random.Range(3, 5);
+            float forkH = trunkHeight * Random.Range(0.68f, 0.82f);
+            float baseAngle = Random.Range(0f, Mathf.PI * 2f);
 
-            // Secondary smaller canopy for volume
-            if (Random.value > 0.4f)
+            List<FoliageCluster> clusters = new List<FoliageCluster>();
+
+            for (int i = 0; i < branchCount; i++)
             {
-                float r2 = canopyRadius * Random.Range(0.5f, 0.7f);
-                GameObject canopy2 = CreateSphere("Canopy2", r2, 5, 4, canopyMat);
-                canopy2.transform.SetParent(tree.transform, false);
-                float offsetX = Random.Range(-canopyRadius * 0.3f, canopyRadius * 0.3f);
-                float offsetZ = Random.Range(-canopyRadius * 0.3f, canopyRadius * 0.3f);
-                canopy2.transform.localPosition = new Vector3(offsetX,
-                    trunkHeight + canopyRadius * 0.8f, offsetZ);
+                float angle = baseAngle + (float)i / branchCount * Mathf.PI * 2f + Random.Range(-0.3f, 0.3f);
+                float branchLen = Random.Range(2.2f, 3.2f) * scale;
+                float branchElevation = Random.Range(1.2f, 2.2f) * scale;
+
+                Vector3 start = new Vector3(
+                    trunkCurve.x * 0.7f + Mathf.Cos(angle) * (baseRadius * 0.7f),
+                    forkH + Random.Range(-0.2f, 0.2f),
+                    trunkCurve.y * 0.7f + Mathf.Sin(angle) * (baseRadius * 0.7f));
+
+                Vector3 end = start + new Vector3(
+                    Mathf.Cos(angle) * branchLen,
+                    branchElevation,
+                    Mathf.Sin(angle) * branchLen);
+
+                branches.Add(new Branch
+                {
+                    start = start,
+                    end = end,
+                    radiusStart = baseRadius * 0.45f,
+                    radiusEnd = baseRadius * 0.20f
+                });
+
+                // Foliage cluster on branch tip
+                clusters.Add(new FoliageCluster
+                {
+                    center = end + new Vector3(0f, Random.Range(0.2f, 0.5f) * scale, 0f),
+                    radius = Random.Range(1.8f, 2.4f) * scale,
+                    scale = new Vector3(1.15f, 0.95f, 1.15f),
+                    seed = Random.Range(10f, 900f)
+                });
+
+                // Filler sub-cluster along branch mid-point
+                if (Random.value > 0.3f)
+                {
+                    Vector3 mid = Vector3.Lerp(start, end, 0.55f) + new Vector3(
+                        Random.Range(-0.4f, 0.4f),
+                        Random.Range(0.3f, 0.7f),
+                        Random.Range(-0.4f, 0.4f)) * scale;
+
+                    clusters.Add(new FoliageCluster
+                    {
+                        center = mid,
+                        radius = Random.Range(1.2f, 1.7f) * scale,
+                        scale = Vector3.one,
+                        seed = Random.Range(10f, 900f)
+                    });
+                }
             }
+
+            // Central apex crown cluster
+            Vector3 crownCenter = new Vector3(trunkCurve.x, trunkHeight + 1.8f * scale, trunkCurve.y);
+            clusters.Add(new FoliageCluster
+            {
+                center = crownCenter,
+                radius = Random.Range(2.4f, 3.2f) * scale,
+                scale = new Vector3(1.1f, 1.0f, 1.1f),
+                seed = Random.Range(10f, 900f)
+            });
+
+            // Top crown dome
+            clusters.Add(new FoliageCluster
+            {
+                center = crownCenter + new Vector3(0f, 1.2f * scale, 0f),
+                radius = Random.Range(1.8f, 2.3f) * scale,
+                scale = new Vector3(0.9f, 0.85f, 0.9f),
+                seed = Random.Range(10f, 900f)
+            });
+
+            // Assemble GameObjects
+            CreateMeshObject("Trunk", tree.transform, BuildTrunkMesh(baseRadius, topRadius, trunkHeight, rootFlare, trunkCurve, branches), trunkMat);
+            CreateMeshObject("Canopy", tree.transform, BuildCanopyMesh(clusters, crownCenter), canopyMat);
         }
 
         // ═══════════════════════════════════════════════
-        //  CONICAL TREE — pine/cypress (cone canopy)
+        //  2. CONICAL TREE — Pine / Spruce / Fir
         // ═══════════════════════════════════════════════
 
         private static void BuildConicalTree(GameObject tree, Material trunkMat, Material canopyMat, float scale)
         {
-            float trunkRadius = 0.12f * scale;
-            float trunkHeight = Random.Range(1.5f, 2.5f) * scale;
-            float coneRadius = Random.Range(1.5f, 2.5f) * scale;
-            float coneHeight = Random.Range(4.0f, 7.0f) * scale;
+            float trunkHeight = Random.Range(9.0f, 13.5f) * scale;
+            float baseRadius = Random.Range(0.20f, 0.28f) * scale;
+            float topRadius = 0.05f * scale;
+            float rootFlare = 1.55f;
 
-            // Trunk (thin, straight)
-            GameObject trunk = CreateTaperedCylinder("Trunk", trunkRadius, trunkRadius * 0.8f,
-                trunkHeight, 4, trunkMat);
-            trunk.transform.SetParent(tree.transform, false);
+            Vector2 trunkCurve = new Vector2(
+                Random.Range(-0.15f, 0.15f) * scale,
+                Random.Range(-0.15f, 0.15f) * scale);
 
-            // Cone canopy (2-3 stacked cones for layered look)
-            int layers = Random.Range(2, 4);
-            for (int i = 0; i < layers; i++)
+            List<Branch> branches = new List<Branch>();
+            List<FoliageCluster> clusters = new List<FoliageCluster>();
+
+            int tiers = Random.Range(5, 8);
+            float startY = Random.Range(1.8f, 2.4f) * scale;
+            float topY = trunkHeight * 0.90f;
+
+            for (int t = 0; t < tiers; t++)
             {
-                float layerBase = trunkHeight + (coneHeight / layers) * i * 0.7f;
-                float layerRadius = coneRadius * (1f - (float)i / layers * 0.4f);
-                float layerHeight = coneHeight / layers * 1.2f;
+                float frac = (float)t / (tiers - 1);
+                float tierY = Mathf.Lerp(startY, topY, frac);
+                float tierSpread = Mathf.Lerp(3.2f, 0.8f, frac) * scale;
+                int pads = Mathf.RoundToInt(Mathf.Lerp(5f, 3f, frac));
+                float rotOffset = t * 1.35f;
 
-                GameObject cone = CreateCone("Cone_" + i, layerRadius, layerHeight, 5, canopyMat);
-                cone.transform.SetParent(tree.transform, false);
-                cone.transform.localPosition = new Vector3(0f, layerBase, 0f);
+                for (int p = 0; p < pads; p++)
+                {
+                    float angle = rotOffset + (float)p / pads * Mathf.PI * 2f;
+                    Vector3 trunkPos = new Vector3(
+                        Mathf.Lerp(0f, trunkCurve.x, tierY / trunkHeight),
+                        tierY,
+                        Mathf.Lerp(0f, trunkCurve.y, tierY / trunkHeight));
+
+                    Vector3 padDir = new Vector3(Mathf.Cos(angle), -0.15f, Mathf.Sin(angle)).normalized;
+                    Vector3 padPos = trunkPos + padDir * tierSpread;
+
+                    // Branch stub supporting bough
+                    branches.Add(new Branch
+                    {
+                        start = trunkPos,
+                        end = padPos,
+                        radiusStart = baseRadius * Mathf.Lerp(0.35f, 0.12f, frac),
+                        radiusEnd = baseRadius * 0.06f
+                    });
+
+                    // Drooping fir bough pad
+                    clusters.Add(new FoliageCluster
+                    {
+                        center = padPos,
+                        radius = Mathf.Lerp(1.2f, 0.6f, frac) * scale,
+                        scale = new Vector3(1.25f, 0.55f, 1.25f),
+                        seed = t * 100f + p * 33f
+                    });
+                }
             }
+
+            // Spire top apex
+            Vector3 spirePos = new Vector3(trunkCurve.x, trunkHeight, trunkCurve.y);
+            clusters.Add(new FoliageCluster
+            {
+                center = spirePos,
+                radius = 0.8f * scale,
+                scale = new Vector3(0.7f, 1.6f, 0.7f),
+                seed = 777f
+            });
+
+            CreateMeshObject("Trunk", tree.transform, BuildTrunkMesh(baseRadius, topRadius, trunkHeight, rootFlare, trunkCurve, branches), trunkMat);
+            CreateMeshObject("Canopy", tree.transform, BuildCanopyMesh(clusters, spirePos - new Vector3(0f, trunkHeight * 0.35f, 0f)), canopyMat);
         }
 
         // ═══════════════════════════════════════════════
-        //  SPREADING TREE — wide flat canopy (banyan/neem)
+        //  3. COLUMNAR TREE — Birch / Boulevard / Cypress
+        // ═══════════════════════════════════════════════
+
+        private static void BuildColumnarTree(GameObject tree, Material trunkMat, Material canopyMat, float scale)
+        {
+            float trunkHeight = Random.Range(5.5f, 8.0f) * scale;
+            float baseRadius = Random.Range(0.16f, 0.22f) * scale;
+            float topRadius = baseRadius * 0.5f;
+            float rootFlare = 1.4f;
+
+            Vector2 trunkCurve = new Vector2(
+                Random.Range(-0.1f, 0.1f) * scale,
+                Random.Range(-0.1f, 0.1f) * scale);
+
+            List<Branch> branches = new List<Branch>();
+            List<FoliageCluster> clusters = new List<FoliageCluster>();
+
+            // Upright ascending branches
+            int branchCount = Random.Range(4, 6);
+            float startY = trunkHeight * 0.45f;
+
+            for (int i = 0; i < branchCount; i++)
+            {
+                float frac = (float)i / branchCount;
+                float angle = frac * Mathf.PI * 2f + Random.Range(-0.2f, 0.2f);
+                float by = Mathf.Lerp(startY, trunkHeight * 0.85f, frac);
+
+                Vector3 bStart = new Vector3(
+                    Mathf.Lerp(0f, trunkCurve.x, by / trunkHeight),
+                    by,
+                    Mathf.Lerp(0f, trunkCurve.y, by / trunkHeight));
+
+                Vector3 bEnd = bStart + new Vector3(
+                    Mathf.Cos(angle) * Random.Range(0.8f, 1.3f) * scale,
+                    Random.Range(1.5f, 2.6f) * scale,
+                    Mathf.Sin(angle) * Random.Range(0.8f, 1.3f) * scale);
+
+                branches.Add(new Branch
+                {
+                    start = bStart,
+                    end = bEnd,
+                    radiusStart = baseRadius * 0.35f,
+                    radiusEnd = baseRadius * 0.12f
+                });
+
+                clusters.Add(new FoliageCluster
+                {
+                    center = bEnd,
+                    radius = Random.Range(1.1f, 1.5f) * scale,
+                    scale = new Vector3(0.85f, 1.5f, 0.85f),
+                    seed = i * 67f
+                });
+            }
+
+            // Central vertical spine clusters
+            for (int c = 0; c < 4; c++)
+            {
+                float cy = Mathf.Lerp(trunkHeight * 0.50f, trunkHeight + 1.8f * scale, c / 3f);
+                clusters.Add(new FoliageCluster
+                {
+                    center = new Vector3(trunkCurve.x * (cy / trunkHeight), cy, trunkCurve.y * (cy / trunkHeight)),
+                    radius = Random.Range(1.3f, 1.7f) * scale,
+                    scale = new Vector3(0.9f, 1.35f, 0.9f),
+                    seed = c * 153f
+                });
+            }
+
+            Vector3 crownCenter = new Vector3(trunkCurve.x, trunkHeight * 0.8f, trunkCurve.y);
+            CreateMeshObject("Trunk", tree.transform, BuildTrunkMesh(baseRadius, topRadius, trunkHeight, rootFlare, trunkCurve, branches), trunkMat);
+            CreateMeshObject("Canopy", tree.transform, BuildCanopyMesh(clusters, crownCenter), canopyMat);
+        }
+
+        // ═══════════════════════════════════════════════
+        //  4. SPREADING TREE — Acacia / Banyan / Rain Tree
         // ═══════════════════════════════════════════════
 
         private static void BuildSpreadingTree(GameObject tree, Material trunkMat, Material canopyMat, float scale)
         {
-            float trunkRadius = 0.2f * scale;
-            float trunkHeight = Random.Range(2.5f, 4.0f) * scale;
-            float canopyRadiusX = Random.Range(4.0f, 6.0f) * scale;
-            float canopyRadiusZ = canopyRadiusX * Random.Range(0.8f, 1.2f);
-            float canopyHeight = Random.Range(1.5f, 2.5f) * scale;
+            float trunkHeight = Random.Range(3.2f, 4.5f) * scale;
+            float baseRadius = Random.Range(0.36f, 0.48f) * scale;
+            float topRadius = baseRadius * 0.65f;
+            float rootFlare = 1.85f; // Heavy buttress roots
 
-            // Thick trunk
-            GameObject trunk = CreateTaperedCylinder("Trunk", trunkRadius * 1.3f, trunkRadius * 0.7f,
-                trunkHeight, 6, trunkMat);
-            trunk.transform.SetParent(tree.transform, false);
+            Vector2 trunkCurve = new Vector2(
+                Random.Range(-0.25f, 0.25f) * scale,
+                Random.Range(-0.25f, 0.25f) * scale);
 
-            // Wide, flat ellipsoid canopy
-            GameObject canopy = CreateSphere("Canopy", 1f, 6, 5, canopyMat);
-            canopy.transform.SetParent(tree.transform, false);
-            canopy.transform.localPosition = new Vector3(0f, trunkHeight + canopyHeight * 0.3f, 0f);
-            canopy.transform.localScale = new Vector3(canopyRadiusX, canopyHeight, canopyRadiusZ);
+            List<Branch> branches = new List<Branch>();
+            List<FoliageCluster> clusters = new List<FoliageCluster>();
 
-            // Secondary canopy blob for irregularity
-            float r2x = canopyRadiusX * Random.Range(0.4f, 0.6f);
-            float r2z = canopyRadiusZ * Random.Range(0.4f, 0.6f);
-            GameObject canopy2 = CreateSphere("Canopy2", 1f, 8, 6, canopyMat);
-            canopy2.transform.SetParent(tree.transform, false);
-            canopy2.transform.localPosition = new Vector3(
-                Random.Range(-canopyRadiusX * 0.25f, canopyRadiusX * 0.25f),
-                trunkHeight + canopyHeight * 0.5f,
-                Random.Range(-canopyRadiusZ * 0.25f, canopyRadiusZ * 0.25f));
-            canopy2.transform.localScale = new Vector3(r2x, canopyHeight * 0.8f, r2z);
+            int limbCount = Random.Range(4, 6);
+            float baseAngle = Random.Range(0f, Mathf.PI * 2f);
+
+            for (int i = 0; i < limbCount; i++)
+            {
+                float angle = baseAngle + (float)i / limbCount * Mathf.PI * 2f + Random.Range(-0.25f, 0.25f);
+                float limbLen = Random.Range(3.5f, 5.2f) * scale;
+                float limbRise = Random.Range(1.2f, 2.2f) * scale;
+
+                Vector3 start = new Vector3(
+                    trunkCurve.x * 0.6f + Mathf.Cos(angle) * (baseRadius * 0.6f),
+                    trunkHeight * Random.Range(0.65f, 0.85f),
+                    trunkCurve.y * 0.6f + Mathf.Sin(angle) * (baseRadius * 0.6f));
+
+                Vector3 limbEnd = start + new Vector3(
+                    Mathf.Cos(angle) * limbLen,
+                    limbRise,
+                    Mathf.Sin(angle) * limbLen);
+
+                branches.Add(new Branch
+                {
+                    start = start,
+                    end = limbEnd,
+                    radiusStart = baseRadius * 0.50f,
+                    radiusEnd = baseRadius * 0.22f
+                });
+
+                // Secondary sub-branch branching off the primary limb
+                float subAngle = angle + (Random.value > 0.5f ? 0.6f : -0.6f);
+                Vector3 subStart = Vector3.Lerp(start, limbEnd, 0.6f);
+                Vector3 subEnd = subStart + new Vector3(
+                    Mathf.Cos(subAngle) * Random.Range(1.8f, 2.8f) * scale,
+                    Random.Range(0.6f, 1.2f) * scale,
+                    Mathf.Sin(subAngle) * Random.Range(1.8f, 2.8f) * scale);
+
+                branches.Add(new Branch
+                {
+                    start = subStart,
+                    end = subEnd,
+                    radiusStart = baseRadius * 0.25f,
+                    radiusEnd = baseRadius * 0.12f
+                });
+
+                // Foliage pads on limb ends (layered horizontal umbrella clouds)
+                clusters.Add(new FoliageCluster
+                {
+                    center = limbEnd + new Vector3(0f, 0.3f * scale, 0f),
+                    radius = Random.Range(2.0f, 2.8f) * scale,
+                    scale = new Vector3(1.35f, 0.65f, 1.35f),
+                    seed = i * 123f
+                });
+
+                clusters.Add(new FoliageCluster
+                {
+                    center = subEnd + new Vector3(0f, 0.2f * scale, 0f),
+                    radius = Random.Range(1.5f, 2.2f) * scale,
+                    scale = new Vector3(1.25f, 0.60f, 1.25f),
+                    seed = i * 234f
+                });
+            }
+
+            // Central umbrella canopy layer
+            Vector3 crownCenter = new Vector3(trunkCurve.x, trunkHeight + 1.6f * scale, trunkCurve.y);
+            clusters.Add(new FoliageCluster
+            {
+                center = crownCenter,
+                radius = Random.Range(2.8f, 3.8f) * scale,
+                scale = new Vector3(1.4f, 0.65f, 1.4f),
+                seed = 999f
+            });
+
+            CreateMeshObject("Trunk", tree.transform, BuildTrunkMesh(baseRadius, topRadius, trunkHeight, rootFlare, trunkCurve, branches), trunkMat);
+            CreateMeshObject("Canopy", tree.transform, BuildCanopyMesh(clusters, crownCenter), canopyMat);
+        }
+
+        // ═══════════════════════════════════════════════
+        //  MESH BUILDERS
+        // ═══════════════════════════════════════════════
+
+        private static Mesh BuildTrunkMesh(
+            float baseRadius,
+            float topRadius,
+            float trunkHeight,
+            float rootFlare,
+            Vector2 trunkCurve,
+            List<Branch> branches)
+        {
+            Mesh mesh = new Mesh();
+            mesh.name = "TreeTrunk";
+
+            List<Vector3> verts = new List<Vector3>();
+            List<Vector2> uvs = new List<Vector2>();
+            List<int> tris = new List<int>();
+
+            int rings = 7;
+            int segments = 8;
+
+            // 1. Trunk rings with root flare and fluting
+            for (int r = 0; r < rings; r++)
+            {
+                float t = (float)r / (rings - 1);
+                float y = t * trunkHeight;
+
+                float rad;
+                if (r == 0)
+                    rad = baseRadius * rootFlare;
+                else if (r == 1)
+                    rad = baseRadius * (1.0f + (rootFlare - 1.0f) * 0.25f);
+                else
+                    rad = Mathf.Lerp(baseRadius, topRadius, (t - 0.2f) / 0.8f);
+
+                float curveFactor = t * t;
+                float cx = trunkCurve.x * curveFactor;
+                float cz = trunkCurve.y * curveFactor;
+
+                for (int s = 0; s <= segments; s++)
+                {
+                    float angle = (float)s / segments * Mathf.PI * 2f;
+                    float flute = (r == 0) ? (1.0f + 0.12f * Mathf.Cos(angle * 5f)) : 1.0f;
+
+                    float vx = cx + Mathf.Cos(angle) * rad * flute;
+                    float vz = cz + Mathf.Sin(angle) * rad * flute;
+
+                    verts.Add(new Vector3(vx, y, vz));
+                    uvs.Add(new Vector2((float)s / segments, y * 0.5f));
+                }
+            }
+
+            int vertsPerRing = segments + 1;
+            for (int r = 0; r < rings - 1; r++)
+            {
+                for (int s = 0; s < segments; s++)
+                {
+                    int current = r * vertsPerRing + s;
+                    int next = current + vertsPerRing;
+
+                    tris.Add(current);
+                    tris.Add(next);
+                    tris.Add(current + 1);
+
+                    tris.Add(current + 1);
+                    tris.Add(next);
+                    tris.Add(next + 1);
+                }
+            }
+
+            // Bottom base cap
+            int bottomCenterIdx = verts.Count;
+            verts.Add(Vector3.zero);
+            uvs.Add(new Vector2(0.5f, 0.5f));
+            for (int s = 0; s < segments; s++)
+            {
+                tris.Add(bottomCenterIdx);
+                tris.Add(s + 1);
+                tris.Add(s);
+            }
+
+            // 2. Scaffold branches
+            if (branches != null)
+            {
+                int bSegments = 6;
+                int bRings = 4;
+
+                foreach (var b in branches)
+                {
+                    Vector3 axis = b.end - b.start;
+                    float len = axis.magnitude;
+                    if (len < 0.01f) continue;
+                    Vector3 dir = axis / len;
+
+                    Vector3 upRef = Vector3.up;
+                    if (Mathf.Abs(Vector3.Dot(dir, upRef)) > 0.88f) upRef = Vector3.forward;
+                    Vector3 right = Vector3.Cross(dir, upRef).normalized;
+                    Vector3 up = Vector3.Cross(right, dir).normalized;
+
+                    int branchStartIdx = verts.Count;
+
+                    for (int r = 0; r < bRings; r++)
+                    {
+                        float t = (float)r / (bRings - 1);
+                        Vector3 center = b.start + dir * (len * t);
+                        float rad = Mathf.Lerp(b.radiusStart, b.radiusEnd, t);
+
+                        for (int s = 0; s <= bSegments; s++)
+                        {
+                            float angle = (float)s / bSegments * Mathf.PI * 2f;
+                            Vector3 p = center + (right * Mathf.Cos(angle) + up * Mathf.Sin(angle)) * rad;
+
+                            verts.Add(p);
+                            uvs.Add(new Vector2((float)s / bSegments, (trunkHeight + len * t) * 0.5f));
+                        }
+                    }
+
+                    int bVertsPerRing = bSegments + 1;
+                    for (int r = 0; r < bRings - 1; r++)
+                    {
+                        for (int s = 0; s < bSegments; s++)
+                        {
+                            int cur = branchStartIdx + r * bVertsPerRing + s;
+                            int nxt = cur + bVertsPerRing;
+
+                            tris.Add(cur);
+                            tris.Add(nxt);
+                            tris.Add(cur + 1);
+
+                            tris.Add(cur + 1);
+                            tris.Add(nxt);
+                            tris.Add(nxt + 1);
+                        }
+                    }
+
+                    // Branch tip cap
+                    int tipCenterIdx = verts.Count;
+                    verts.Add(b.end);
+                    uvs.Add(new Vector2(0.5f, 0.5f));
+                    int lastRingStart = branchStartIdx + (bRings - 1) * bVertsPerRing;
+                    for (int s = 0; s < bSegments; s++)
+                    {
+                        tris.Add(tipCenterIdx);
+                        tris.Add(lastRingStart + s);
+                        tris.Add(lastRingStart + s + 1);
+                    }
+                }
+            }
+
+            mesh.vertices = verts.ToArray();
+            mesh.uv = uvs.ToArray();
+            mesh.triangles = tris.ToArray();
+            mesh.RecalculateNormals();
+            mesh.RecalculateTangents();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        private static Mesh BuildCanopyMesh(List<FoliageCluster> clusters, Vector3 treeCrownCenter)
+        {
+            Mesh mesh = new Mesh();
+            mesh.name = "TreeCanopy";
+
+            List<Vector3> verts = new List<Vector3>();
+            List<Vector3> normals = new List<Vector3>();
+            List<Vector2> uvs = new List<Vector2>();
+            List<int> tris = new List<int>();
+
+            int latRings = 7;
+            int lonSegments = 10;
+
+            foreach (var cluster in clusters)
+            {
+                int clusterStartIdx = verts.Count;
+
+                for (int lat = 0; lat <= latRings; lat++)
+                {
+                    float phi = (float)lat / latRings * Mathf.PI;
+                    float sinPhi = Mathf.Sin(phi);
+                    float cosPhi = Mathf.Cos(phi);
+
+                    for (int lon = 0; lon <= lonSegments; lon++)
+                    {
+                        float theta = (float)lon / lonSegments * Mathf.PI * 2f;
+                        float cosTheta = Mathf.Cos(theta);
+                        float sinTheta = Mathf.Sin(theta);
+
+                        Vector3 dir = new Vector3(sinPhi * cosTheta, cosPhi, sinPhi * sinTheta);
+
+                        // Multi-octave 3D Perlin noise leaf displacement
+                        float n1 = Mathf.PerlinNoise(dir.x * 2.6f + cluster.seed, dir.y * 2.6f + cluster.seed * 1.3f);
+                        float n2 = Mathf.PerlinNoise(dir.z * 4.2f + cluster.seed * 2.1f, dir.x * 4.2f + cluster.seed * 0.7f);
+                        float disp = 1.0f + (n1 - 0.5f) * 0.36f + (n2 - 0.5f) * 0.18f;
+
+                        Vector3 p = cluster.center + Vector3.Scale(dir * (cluster.radius * disp), cluster.scale);
+
+                        // Spherical botanical normal blending (soft voluminous shading)
+                        Vector3 crownDir = (p - treeCrownCenter).normalized;
+                        Vector3 blendedNormal = Vector3.Lerp(dir, crownDir, 0.42f).normalized;
+
+                        verts.Add(p);
+                        normals.Add(blendedNormal);
+                        uvs.Add(new Vector2((float)lon / lonSegments, (float)lat / latRings));
+                    }
+                }
+
+                int vertsPerLat = lonSegments + 1;
+                for (int lat = 0; lat < latRings; lat++)
+                {
+                    for (int lon = 0; lon < lonSegments; lon++)
+                    {
+                        int current = clusterStartIdx + lat * vertsPerLat + lon;
+                        int next = current + vertsPerLat;
+
+                        tris.Add(current);
+                        tris.Add(next);
+                        tris.Add(current + 1);
+
+                        tris.Add(current + 1);
+                        tris.Add(next);
+                        tris.Add(next + 1);
+                    }
+                }
+            }
+
+            mesh.vertices = verts.ToArray();
+            mesh.normals = normals.ToArray();
+            mesh.uv = uvs.ToArray();
+            mesh.triangles = tris.ToArray();
+            mesh.RecalculateTangents();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        private static GameObject CreateMeshObject(string name, Transform parent, Mesh mesh, Material mat)
+        {
+            GameObject go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+
+            MeshFilter mf = go.AddComponent<MeshFilter>();
+            mf.sharedMesh = mesh;
+
+            MeshRenderer mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = mat;
+            mr.shadowCastingMode = ShadowCastingMode.On;
+            mr.receiveShadows = true;
+
+            return go;
         }
 
         /// <summary>
@@ -274,7 +842,7 @@ namespace GeoCity3D.Geometry
                 float angle = Random.Range(0f, Mathf.PI * 2f);
                 float dist = Mathf.Sqrt(Random.value) * radius;
                 Vector3 pos = center + new Vector3(Mathf.Cos(angle) * dist, 0, Mathf.Sin(angle) * dist);
-                float treeScale = Random.Range(0.5f, 1.2f);
+                float treeScale = Random.Range(0.75f, 1.25f);
 
                 trees.Add(Build(pos, shader, treeScale));
             }
@@ -282,12 +850,9 @@ namespace GeoCity3D.Geometry
         }
 
         // ═══════════════════════════════════════════════
-        //  PREFAB-BASED TREE PLACEMENT
+        //  PREFAB-BASED TREE PLACEMENT (fallback / optional)
         // ═══════════════════════════════════════════════
 
-        /// <summary>
-        /// Build a single tree from a prefab array. Auto-scales and grounds the model.
-        /// </summary>
         public static GameObject BuildPrefab(Vector3 position, GameObject[] prefabs, float scale = 1f)
         {
             if (prefabs == null || prefabs.Length == 0) return null;
@@ -306,7 +871,6 @@ namespace GeoCity3D.Geometry
             GameObject tree = Object.Instantiate(prefab, position, Quaternion.Euler(0f, yAngle, 0f));
             tree.name = "Tree_Prefab";
 
-            // Auto-scale: target 3-8m tall
             float targetHeight = Random.Range(3f, 8f) * scale;
             Renderer[] renderers = tree.GetComponentsInChildren<Renderer>();
             if (renderers.Length > 0)
@@ -322,7 +886,6 @@ namespace GeoCity3D.Geometry
                     tree.transform.localScale *= s;
                 }
 
-                // Ground the tree
                 renderers = tree.GetComponentsInChildren<Renderer>();
                 if (renderers.Length > 0)
                 {
@@ -338,9 +901,6 @@ namespace GeoCity3D.Geometry
             return tree;
         }
 
-        /// <summary>
-        /// Scatter prefab trees in a circular area.
-        /// </summary>
         public static List<GameObject> ScatterTreesPrefab(Vector3 center, float radius, int count,
             GameObject[] treePrefabs)
         {
@@ -352,7 +912,7 @@ namespace GeoCity3D.Geometry
                 float angle = Random.Range(0f, Mathf.PI * 2f);
                 float dist = Mathf.Sqrt(Random.value) * radius;
                 Vector3 pos = center + new Vector3(Mathf.Cos(angle) * dist, 0, Mathf.Sin(angle) * dist);
-                float treeScale = Random.Range(0.5f, 1.2f);
+                float treeScale = Random.Range(0.6f, 1.2f);
 
                 GameObject tree = BuildPrefab(pos, treePrefabs, treeScale);
                 if (tree != null) trees.Add(tree);
@@ -360,9 +920,6 @@ namespace GeoCity3D.Geometry
             return trees;
         }
 
-        /// <summary>
-        /// Scatter trees, bushes, and rocks in a park area using prefabs.
-        /// </summary>
         public static List<GameObject> ScatterParkNature(Vector3 center, float radius, int totalCount,
             GameObject[] treePrefabs, GameObject[] bushPrefabs, GameObject[] rockPrefabs)
         {
@@ -374,13 +931,12 @@ namespace GeoCity3D.Geometry
                 float dist = Mathf.Sqrt(Random.value) * radius;
                 Vector3 pos = center + new Vector3(Mathf.Cos(angle) * dist, 0, Mathf.Sin(angle) * dist);
 
-                // 60% trees, 25% bushes, 15% rocks
                 float r = Random.value;
                 GameObject obj = null;
 
                 if (r < 0.60f && treePrefabs != null && treePrefabs.Length > 0)
                 {
-                    obj = BuildPrefab(pos, treePrefabs, Random.Range(0.5f, 1.2f));
+                    obj = BuildPrefab(pos, treePrefabs, Random.Range(0.6f, 1.2f));
                 }
                 else if (r < 0.85f && bushPrefabs != null && bushPrefabs.Length > 0)
                 {
@@ -392,163 +948,12 @@ namespace GeoCity3D.Geometry
                 }
                 else if (treePrefabs != null && treePrefabs.Length > 0)
                 {
-                    obj = BuildPrefab(pos, treePrefabs, Random.Range(0.5f, 1.2f));
+                    obj = BuildPrefab(pos, treePrefabs, Random.Range(0.6f, 1.2f));
                 }
 
                 if (obj != null) objects.Add(obj);
             }
             return objects;
-        }
-
-        // ═══════════════════════════════════════════════
-        //  MESH PRIMITIVES
-        // ═══════════════════════════════════════════════
-
-        private static GameObject CreateTaperedCylinder(string name, float bottomRadius, float topRadius,
-            float height, int segments, Material mat)
-        {
-            GameObject go = new GameObject(name);
-            MeshFilter mf = go.AddComponent<MeshFilter>();
-            MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = mat;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-
-            Mesh mesh = new Mesh();
-            List<Vector3> verts = new List<Vector3>();
-            List<int> tris = new List<int>();
-
-            // Side vertices
-            for (int i = 0; i <= segments; i++)
-            {
-                float angle = (float)i / segments * Mathf.PI * 2f;
-                float cos = Mathf.Cos(angle);
-                float sin = Mathf.Sin(angle);
-                verts.Add(new Vector3(cos * bottomRadius, 0, sin * bottomRadius));
-                verts.Add(new Vector3(cos * topRadius, height, sin * topRadius));
-            }
-
-            for (int i = 0; i < segments; i++)
-            {
-                int b = i * 2;
-                tris.Add(b); tris.Add(b + 1); tris.Add(b + 2);
-                tris.Add(b + 1); tris.Add(b + 3); tris.Add(b + 2);
-            }
-
-            // Base disc
-            int centerIdx = verts.Count;
-            verts.Add(Vector3.zero);
-            for (int i = 0; i < segments; i++)
-            {
-                float angle = (float)i / segments * Mathf.PI * 2f;
-                verts.Add(new Vector3(Mathf.Cos(angle) * bottomRadius, 0, Mathf.Sin(angle) * bottomRadius));
-            }
-            for (int i = 0; i < segments; i++)
-            {
-                int next = (i + 1) % segments;
-                tris.Add(centerIdx); tris.Add(centerIdx + 1 + next); tris.Add(centerIdx + 1 + i);
-            }
-
-            mesh.vertices = verts.ToArray();
-            mesh.triangles = tris.ToArray();
-            mesh.RecalculateNormals();
-            mesh.RecalculateBounds();
-            mf.sharedMesh = mesh;
-            return go;
-        }
-
-        private static GameObject CreateSphere(string name, float radius, int rings, int segments, Material mat)
-        {
-            GameObject go = new GameObject(name);
-            MeshFilter mf = go.AddComponent<MeshFilter>();
-            MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = mat;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-
-            Mesh mesh = new Mesh();
-            List<Vector3> verts = new List<Vector3>();
-            List<int> tris = new List<int>();
-
-            for (int ring = 0; ring <= rings; ring++)
-            {
-                float phi = Mathf.PI * ring / rings;
-                float y = Mathf.Cos(phi) * radius;
-                float ringRadius = Mathf.Sin(phi) * radius;
-
-                for (int seg = 0; seg <= segments; seg++)
-                {
-                    float theta = Mathf.PI * 2f * seg / segments;
-                    verts.Add(new Vector3(Mathf.Cos(theta) * ringRadius, y, Mathf.Sin(theta) * ringRadius));
-                }
-            }
-
-            int vertsPerRing = segments + 1;
-            for (int ring = 0; ring < rings; ring++)
-            {
-                for (int seg = 0; seg < segments; seg++)
-                {
-                    int current = ring * vertsPerRing + seg;
-                    int next = current + vertsPerRing;
-                    tris.Add(current); tris.Add(next); tris.Add(current + 1);
-                    tris.Add(current + 1); tris.Add(next); tris.Add(next + 1);
-                }
-            }
-
-            mesh.vertices = verts.ToArray();
-            mesh.triangles = tris.ToArray();
-            mesh.RecalculateNormals();
-            mesh.RecalculateBounds();
-            mf.sharedMesh = mesh;
-            return go;
-        }
-
-        private static GameObject CreateCone(string name, float radius, float height,
-            int segments, Material mat)
-        {
-            GameObject go = new GameObject(name);
-            MeshFilter mf = go.AddComponent<MeshFilter>();
-            MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = mat;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-
-            Mesh mesh = new Mesh();
-            List<Vector3> verts = new List<Vector3>();
-            List<int> tris = new List<int>();
-
-            // Apex
-            int apexIdx = 0;
-            verts.Add(new Vector3(0, height, 0));
-
-            // Base ring
-            for (int i = 0; i <= segments; i++)
-            {
-                float angle = (float)i / segments * Mathf.PI * 2f;
-                verts.Add(new Vector3(Mathf.Cos(angle) * radius, 0, Mathf.Sin(angle) * radius));
-            }
-
-            // Side triangles
-            for (int i = 0; i < segments; i++)
-            {
-                tris.Add(apexIdx);
-                tris.Add(1 + i);
-                tris.Add(1 + i + 1);
-            }
-
-            // Base disc
-            int centerIdx = verts.Count;
-            verts.Add(Vector3.zero);
-            for (int i = 0; i < segments; i++)
-            {
-                tris.Add(centerIdx);
-                tris.Add(1 + (i + 1) % segments);
-                tris.Add(1 + i);
-            }
-
-            mesh.vertices = verts.ToArray();
-            mesh.triangles = tris.ToArray();
-            mesh.RecalculateNormals();
-            mesh.RecalculateBounds();
-            mf.sharedMesh = mesh;
-            return go;
         }
     }
 }

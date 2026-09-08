@@ -351,17 +351,14 @@ namespace GeoCity3D.Geometry
                         if (inBuilding) continue;
                     }
 
-                    // 2. Road collision check
+                    // 2. Road collision check (Exact 2D segment distance + intersection clearance)
+                    if (RoadSpatialIndex.IsPointOnRoad(pos, 0.4f)) continue;
                     if (roadBounds != null)
                     {
                         bool inRoad = false;
                         for (int r = 0; r < roadBounds.Count; r++)
                         {
-                            if (roadBounds[r].Contains(pos))
-                            {
-                                inRoad = true;
-                                break;
-                            }
+                            if (roadBounds[r].Contains(pos)) { inRoad = true; break; }
                         }
                         if (inRoad) continue;
                     }
@@ -400,8 +397,8 @@ namespace GeoCity3D.Geometry
                         Vector2 offset2D = Random.insideUnitCircle * (spacing * 0.40f);
                         Vector3 satPos = new Vector3(pos.x + offset2D.x, surfaceY, pos.z + offset2D.y);
 
-                        bool satBlocked = false;
-                        if (buildingBounds != null)
+                        bool satBlocked = RoadSpatialIndex.IsPointOnRoad(satPos, 0.4f);
+                        if (!satBlocked && buildingBounds != null)
                         {
                             for (int b = 0; b < buildingBounds.Count; b++)
                             {
@@ -432,7 +429,8 @@ namespace GeoCity3D.Geometry
                     {
                         Vector3 riverPos = pos + new Vector3(Random.Range(-1.5f, 1.5f), 0f, Random.Range(-1.5f, 1.5f));
                         riverPos.y = surfaceY;
-                        if (!WaterBuilder.IsPointInWater(riverPos, waterAreas, waterways, 0.6f))
+                        if (!RoadSpatialIndex.IsPointOnRoad(riverPos, 0.4f) &&
+                            !WaterBuilder.IsPointInWater(riverPos, waterAreas, waterways, 0.6f))
                         {
                             GameObject rg = BuildGrass(riverPos, prefabs, shader, Random.Range(1.1f, 1.7f));
                             if (rg != null)

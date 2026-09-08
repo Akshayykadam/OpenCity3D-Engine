@@ -13,6 +13,22 @@ namespace GeoCity3D.Editor
         private const string SimplePolyRoot = "Assets/SimplePoly City - Low Poly Assets";
         private const string PrefabRoot = SimplePolyRoot + "/Prefab";
 
+        [MenuItem("GeoCity3D/Restore Camera Cull Distances (Fix Invisible Grass)", false, 3)]
+        public static void RestoreCameraCullDistances()
+        {
+            Camera mainCam = Camera.main;
+            if (mainCam != null)
+            {
+                mainCam.layerCullDistances = new float[32];
+                mainCam.layerCullSpherical = false;
+                Debug.Log("GeoCity3D: Reset Camera.layerCullDistances. Grass and combined chunks will now render in Game View!");
+            }
+            else
+            {
+                Debug.LogWarning("GeoCity3D: No MainCamera found in scene.");
+            }
+        }
+
         [MenuItem("GeoCity3D/Setup Scene", false, 2)]
         public static void Setup()
         {
@@ -146,23 +162,26 @@ namespace GeoCity3D.Editor
             controller.BuildingRoofMaterial = CreateSolidMaterial(matPath, "BuildingRoofMat", shader,
                 new Color(0.45f, 0.43f, 0.42f), 0.1f);
 
-            // Road materials — solid asphalt colors matching low-poly aesthetic
+            string asphaltTex = "Assets/GeoCity3D/Textures/asphalt_road.jpg";
+            string concreteTex = "Assets/GeoCity3D/Textures/concrete.jpg";
+
+            // Road materials — textured asphalt colors matching modern low-poly aesthetic
             controller.MotorwayMaterial = CreateSolidMaterial(matPath, "MotorwayMat", shader,
-                new Color(0.20f, 0.20f, 0.22f), 0.08f);
+                new Color(0.25f, 0.25f, 0.27f), 0.12f, asphaltTex, new Vector2(1f, 10f));
             controller.PrimaryRoadMaterial = CreateSolidMaterial(matPath, "PrimaryRoadMat", shader,
-                new Color(0.25f, 0.25f, 0.27f), 0.08f);
+                new Color(0.30f, 0.30f, 0.32f), 0.10f, asphaltTex, new Vector2(1f, 8f));
             controller.ResidentialRoadMaterial = CreateSolidMaterial(matPath, "ResidentialRoadMat", shader,
-                new Color(0.30f, 0.30f, 0.32f), 0.08f);
+                new Color(0.35f, 0.35f, 0.37f), 0.08f, asphaltTex, new Vector2(1f, 6f));
             controller.FootpathMaterial = CreateSolidMaterial(matPath, "FootpathMat", shader,
-                new Color(0.55f, 0.55f, 0.53f), 0.10f);
+                new Color(0.60f, 0.60f, 0.58f), 0.10f, concreteTex, new Vector2(2f, 8f));
             controller.CrosswalkMaterial = CreateSolidMaterial(matPath, "CrosswalkMat", shader,
-                new Color(0.85f, 0.85f, 0.82f), 0.08f);
+                new Color(0.92f, 0.92f, 0.88f), 0.08f);
 
             // General road / sidewalk
             controller.RoadMaterial = CreateSolidMaterial(matPath, "RoadMat", shader,
-                new Color(0.22f, 0.22f, 0.24f), 0.05f);
+                new Color(0.28f, 0.28f, 0.30f), 0.08f, asphaltTex, new Vector2(1f, 6f));
             controller.SidewalkMaterial = CreateSolidMaterial(matPath, "SidewalkMat", shader,
-                new Color(0.60f, 0.60f, 0.60f), 0.1f);
+                new Color(0.68f, 0.68f, 0.68f), 0.15f, concreteTex, new Vector2(2f, 8f));
 
             // Ground & Park — solid colors matching low-poly style
             controller.GroundMaterial = CreateSolidMaterial(matPath, "GroundMat", shader,
@@ -270,7 +289,7 @@ namespace GeoCity3D.Editor
         }
 
         private static Material CreateSolidMaterial(string folder, string matName, Shader shader,
-            Color color, float smoothness)
+            Color color, float smoothness, string texturePath = null, Vector2? tile = null)
         {
             string matAssetPath = $"{folder}/{matName}.mat";
 
@@ -279,9 +298,29 @@ namespace GeoCity3D.Editor
 
             Material mat = new Material(shader);
             mat.color = color;
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
             if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", smoothness);
             if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", smoothness);
             if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
+
+            if (!string.IsNullOrEmpty(texturePath))
+            {
+                Texture2D tex = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
+                if (tex != null)
+                {
+                    mat.mainTexture = tex;
+                    if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", tex);
+                    if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", tex);
+                    if (tile.HasValue)
+                    {
+                        mat.mainTextureScale = tile.Value;
+                        if (mat.HasProperty("_BaseMap")) mat.SetTextureScale("_BaseMap", tile.Value);
+                        if (mat.HasProperty("_MainTex")) mat.SetTextureScale("_MainTex", tile.Value);
+                    }
+                }
+            }
+
             mat.renderQueue = 2000;
             mat.enableInstancing = true;
 

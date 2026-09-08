@@ -85,15 +85,22 @@ namespace GeoCity3D
             Camera mainCam = Camera.main;
             if (mainCam != null)
             {
-                float[] cullDistances = new float[32];
-                int grassLayer = LayerMask.NameToLayer("Grass");
-                if (grassLayer >= 0) cullDistances[grassLayer] = 110f;
-                int propsLayer = LayerMask.NameToLayer("Props");
-                if (propsLayer >= 0) cullDistances[propsLayer] = 180f;
-
-                mainCam.layerCullDistances = cullDistances;
-                mainCam.layerCullSpherical = true;
+                // Reset layer cull distances.
+                // NOTE: CityCombiner merges grass and props into large spatial chunks (e.g. 350m cells).
+                // Camera.layerCullDistances tests against the chunk's bounding sphere center.
+                // A short cull distance (such as 110m or 180m) causes Unity to cull the entire 350m chunk
+                // whenever the chunk's bounding center is >110m away, even if grass blades are 1m in front of the camera!
+                // Setting cull distance to 0 (default in new float[32]) allows standard frustum culling.
+                mainCam.layerCullDistances = new float[32];
+                mainCam.layerCullSpherical = false;
             }
+        }
+
+        [ContextMenu("Restore Camera Cull Distances")]
+        public void RestoreCameraCullDistances()
+        {
+            ApplyPlayModeOptimizations();
+            Debug.Log("CityController: Camera.layerCullDistances reset. Grass is now visible in Game View.");
         }
     }
 }

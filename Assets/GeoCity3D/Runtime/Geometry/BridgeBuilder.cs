@@ -27,7 +27,8 @@ namespace GeoCity3D.Geometry
         public static GameObject Build(List<Vector3> path, float width,
             Material roadMat, Material sidewalkMat, long id, string highwayType,
             bool rampAtStart = true, bool rampAtEnd = true,
-            float startElevation = ROAD_SURFACE_Y, float endElevation = ROAD_SURFACE_Y)
+            float startElevation = ROAD_SURFACE_Y, float endElevation = ROAD_SURFACE_Y,
+            float targetElevation = -1f)
         {
             if (path == null || path.Count < 2) return null;
 
@@ -38,10 +39,18 @@ namespace GeoCity3D.Geometry
             for (int i = 1; i < path.Count; i++)
                 totalLength += Vector3.Distance(path[i], path[i - 1]);
 
+            bool isFullRamp = Mathf.Abs(startElevation - endElevation) > 1.0f;
+
+            if (targetElevation <= 0f)
+            {
+                targetElevation = Mathf.Max(startElevation, endElevation);
+                if (targetElevation < 1.0f) targetElevation = BRIDGE_ELEVATION;
+            }
+
             if (totalLength < 4f)
             {
                 // Fallback for microscopic bridges / culverts
-                float elev = (!rampAtStart || !rampAtEnd) ? BRIDGE_ELEVATION : ROAD_SURFACE_Y;
+                float elev = (!rampAtStart || !rampAtEnd) ? targetElevation : ROAD_SURFACE_Y;
                 GameObject fallbackRoad = RoadBuilder.CreateSolidStrip(path, width, elev, 0.12f, roadMat, $"BridgeRoad_{id}");
                 if (fallbackRoad != null) fallbackRoad.transform.SetParent(parent.transform);
                 return parent;
@@ -49,10 +58,9 @@ namespace GeoCity3D.Geometry
 
             // Smooth slope parameters (~14% max grade for comfortable vehicle ascent)
             float maxGrade = 0.14f;
-            float targetElevation = BRIDGE_ELEVATION;
 
             float startRampLen = 0f;
-            if (rampAtStart)
+            if (rampAtStart && !isFullRamp && startElevation < targetElevation - 0.2f)
             {
                 startRampLen = Mathf.Clamp(totalLength * 0.32f, 6f, 26f);
                 float maxElev = startElevation + startRampLen * maxGrade;
@@ -60,7 +68,7 @@ namespace GeoCity3D.Geometry
             }
 
             float endRampLen = 0f;
-            if (rampAtEnd)
+            if (rampAtEnd && !isFullRamp && endElevation < targetElevation - 0.2f)
             {
                 endRampLen = Mathf.Clamp(totalLength * 0.32f, 6f, 26f);
                 float maxElev = endElevation + endRampLen * maxGrade;
@@ -80,18 +88,18 @@ namespace GeoCity3D.Geometry
                 float dist = t * totalLength;
                 Vector3 pt = RoadBuilder.GetPointAlongPath(path, t);
                 pt.y = ComputeElevation(dist, totalLength, startRampLen, endRampLen, targetElevation,
-                    rampAtStart, rampAtEnd, startElevation, endElevation);
+                    rampAtStart, rampAtEnd, startElevation, endElevation, isFullRamp);
                 denseDeckPath.Add(pt);
                 sampleDistances.Add(dist);
             }
 
-            // Guarantee exact boundary contact with incoming and outgoing ground roads
+            // Guarantee exact boundary contact with incoming and outgoing road segments
             Vector3 startPt = denseDeckPath[0];
-            startPt.y = rampAtStart ? startElevation : targetElevation;
+            startPt.y = startElevation;
             denseDeckPath[0] = startPt;
 
             Vector3 endPt = denseDeckPath[denseDeckPath.Count - 1];
-            endPt.y = rampAtEnd ? endElevation : targetElevation;
+            endPt.y = endElevation;
             denseDeckPath[denseDeckPath.Count - 1] = endPt;
 
             // ── 3. Bridge Roadway Deck (3D Solid Strip) ──
@@ -99,16 +107,16 @@ namespace GeoCity3D.Geometry
                 BRIDGE_DECK_THICKNESS, roadMat, $"BridgeRoadway_{id}");
             if (roadway != null) roadway.transform.SetParent(parent.transform);
 
-            // ── 4. Solid Retaining Walls Under Approach Ramps (Abutment Wings) ──
+            // ── 4. Solid Retaining Walls Under Approach Ramps (Only when touching ground) ──
             Material concreteMat = sidewalkMat != null ? sidewalkMat : roadMat;
-            if (rampAtStart && startRampLen > 2f)
+            if (rampAtStart && startRampLen > 2f && startElevation <= 1.0f && !isFullRamp)
             {
                 GameObject startAbutmentWalls = CreateRampRetainingWalls(denseDeckPath, sampleDistances,
                     0f, startRampLen, width, concreteMat, $"AbutmentWalls_Start_{id}");
                 if (startAbutmentWalls != null) startAbutmentWalls.transform.SetParent(parent.transform);
             }
 
-            if (rampAtEnd && endRampLen > 2f)
+            if (rampAtEnd && endRampLen > 2f && endElevation <= 1.0f && !isFullRamp)
             {
                 GameObject endAbutmentWalls = CreateRampRetainingWalls(denseDeckPath, sampleDistances,
                     totalLength - endRampLen, totalLength, width, concreteMat, $"AbutmentWalls_End_{id}");
@@ -116,7 +124,7 @@ namespace GeoCity3D.Geometry
             }
 
             // ── 5. Abutment Anchor Piers at Ramp-to-Span Transitions ──
-            if (rampAtStart && startRampLen > 2f)
+            if (rampAtStart && startRampLen > 2f && startElevation <= 1.0f && !isFullRamp)
             {
                 Vector3 startPierPos = RoadBuilder.GetPointAlongPath(denseDeckPath, startRampLen / totalLength);
                 float startPierHeight = Mathf.Max(0.5f, startPierPos.y - BRIDGE_DECK_THICKNESS);
@@ -126,7 +134,7 @@ namespace GeoCity3D.Geometry
                 if (startPier != null) startPier.transform.SetParent(parent.transform);
             }
 
-            if (rampAtEnd && endRampLen > 2f)
+            if (rampAtEnd && endRampLen > 2f && endElevation <= 1.0f && !isFullRamp)
             {
                 Vector3 endPierPos = RoadBuilder.GetPointAlongPath(denseDeckPath, (totalLength - endRampLen) / totalLength);
                 float endPierHeight = Mathf.Max(0.5f, endPierPos.y - BRIDGE_DECK_THICKNESS);
@@ -136,9 +144,9 @@ namespace GeoCity3D.Geometry
                 if (endPier != null) endPier.transform.SetParent(parent.transform);
             }
 
-            // ── 6. Open Elevated Span Support Pillars ──
-            float spanStart = rampAtStart ? (startRampLen + 4f) : 2f;
-            float spanEnd = rampAtEnd ? (totalLength - endRampLen - 4f) : (totalLength - 2f);
+            // ── 6. Open Elevated Span Support Pillars (Clearance Checked!) ──
+            float spanStart = (rampAtStart && !isFullRamp) ? (startRampLen + 4f) : 2f;
+            float spanEnd = (rampAtEnd && !isFullRamp) ? (totalLength - endRampLen - 4f) : (totalLength - 2f);
             float spanLength = spanEnd - spanStart;
 
             if (spanLength >= 10f)
@@ -150,8 +158,12 @@ namespace GeoCity3D.Geometry
                     float pDist = spanStart + frac * spanLength;
                     Vector3 pPos = RoadBuilder.GetPointAlongPath(denseDeckPath, pDist / totalLength);
                     float deckY = pPos.y;
-                    pPos.y = 0f;
 
+                    // Clearance check: never place a pillar through a lower road!
+                    if (RoadSpatialIndex.IsRoadUnderneath(pPos, deckY, width * 0.5f + 1.0f))
+                        continue;
+
+                    pPos.y = 0f;
                     float pillarHeight = deckY - BRIDGE_DECK_THICKNESS;
                     if (pillarHeight >= 1.2f)
                     {
@@ -162,9 +174,11 @@ namespace GeoCity3D.Geometry
                 }
             }
 
-            // ── 7. Pedestrian Sidewalks (Left & Right) ──
+            // ── 7. Pedestrian Sidewalks (Only for urban bridges, NOT for motorways/ramps) ──
             float halfRoad = width / 2f;
-            bool hasSidewalks = sidewalkMat != null;
+            string hw = (highwayType ?? "").ToLower();
+            bool isMotorway = hw.Contains("motorway") || hw.Contains("trunk");
+            bool hasSidewalks = sidewalkMat != null && !isMotorway;
 
             if (hasSidewalks)
             {
@@ -191,7 +205,7 @@ namespace GeoCity3D.Geometry
                 if (swR != null) swR.transform.SetParent(parent.transform);
             }
 
-            // ── 8. Safety Railings (Left & Right) ──
+            // ── 8. Safety Railings / Parapets (Left & Right) ──
             float railOffset = halfRoad + (hasSidewalks ? SIDEWALK_WIDTH : 0f) + BRIDGE_RAIL_THICKNESS / 2f;
             float curbOffset = hasSidewalks ? SIDEWALK_CURB : 0f;
 
@@ -212,10 +226,10 @@ namespace GeoCity3D.Geometry
                     BRIDGE_RAIL_HEIGHT, concreteMat, railName);
                 if (rail != null) rail.transform.SetParent(parent.transform);
 
-                // Concrete end-post barriers at the road interface (only at true terminal ground ends)
+                // Concrete end-post barriers (only at true terminal ground ends)
                 if (railPath.Count >= 2)
                 {
-                    if (rampAtStart)
+                    if (rampAtStart && startElevation <= 1.0f)
                     {
                         Vector3 postStart = railPath[0];
                         postStart.y = startElevation + curbOffset;
@@ -223,7 +237,7 @@ namespace GeoCity3D.Geometry
                         if (p1 != null) p1.transform.SetParent(parent.transform);
                     }
 
-                    if (rampAtEnd)
+                    if (rampAtEnd && endElevation <= 1.0f)
                     {
                         Vector3 postEnd = railPath[railPath.Count - 1];
                         postEnd.y = endElevation + curbOffset;
@@ -242,15 +256,23 @@ namespace GeoCity3D.Geometry
 
         /// <summary>
         /// Computes smooth elevation along the bridge path:
-        /// Respects rampAtStart and rampAtEnd flags so connecting bridge segments remain elevated without dipping.
+        /// Supports multi-tier elevations, full incline ramps, and gentle parabolic mid-span crowns.
         /// </summary>
         public static float ComputeElevation(float dist, float totalLength,
             float startRampLength, float endRampLength, float targetElevation,
             bool rampAtStart = true, bool rampAtEnd = true,
-            float startElevation = ROAD_SURFACE_Y, float endElevation = ROAD_SURFACE_Y)
+            float startElevation = ROAD_SURFACE_Y, float endElevation = ROAD_SURFACE_Y,
+            bool isFullRamp = false)
         {
-            if (dist <= 0f) return rampAtStart ? startElevation : targetElevation;
-            if (dist >= totalLength) return rampAtEnd ? endElevation : targetElevation;
+            if (dist <= 0f) return startElevation;
+            if (dist >= totalLength) return endElevation;
+
+            if (isFullRamp)
+            {
+                float t = Mathf.Clamp01(dist / totalLength);
+                float smoothT = Mathf.SmoothStep(0f, 1f, t);
+                return Mathf.Lerp(startElevation, endElevation, smoothT);
+            }
 
             if (rampAtStart && dist < startRampLength)
             {
@@ -271,7 +293,7 @@ namespace GeoCity3D.Geometry
                 float spanEnd = rampAtEnd ? (totalLength - endRampLength) : totalLength;
                 float spanLen = spanEnd - spanStart;
                 float crown = 0f;
-                if (spanLen > 8f)
+                if (spanLen > 8f && Mathf.Abs(startElevation - endElevation) < 0.5f)
                 {
                     float midT = Mathf.Clamp01((dist - spanStart) / spanLen);
                     crown = Mathf.Sin(midT * Mathf.PI) * 0.25f;
@@ -279,6 +301,7 @@ namespace GeoCity3D.Geometry
                 return targetElevation + crown;
             }
         }
+
 
         // ══════════════════════════════════════════════════════════════
         //  SOLID RAMP RETAINING WALLS (ABUTMENTS)

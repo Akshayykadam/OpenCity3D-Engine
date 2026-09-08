@@ -1064,5 +1064,160 @@ namespace GeoCity3D.Visuals
             tex.filterMode = FilterMode.Bilinear;
             return tex;
         }
+
+        // ═══════════════════════════════════════════════
+        //  BARK TEXTURE & NORMAL MAP — realistic tree trunk
+        // ═══════════════════════════════════════════════
+
+        public static Texture2D CreateBarkTexture(int width = 256, int height = 512)
+        {
+            Texture2D tex = new Texture2D(width, height);
+            Color[] pixels = new Color[width * height];
+
+            Color baseBark = new Color(0.34f, 0.25f, 0.17f);
+            Color darkFurrow = new Color(0.18f, 0.12f, 0.08f);
+            Color lightRidge = new Color(0.44f, 0.34f, 0.24f);
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    // Vertical elongated bark furrow noise
+                    float n1 = Mathf.PerlinNoise(x * 0.12f + 50f, y * 0.018f + 50f);
+                    float n2 = Mathf.PerlinNoise(x * 0.35f + 120f, y * 0.06f + 120f) * 0.4f;
+                    float nFine = Mathf.PerlinNoise(x * 0.8f + 250f, y * 0.15f + 250f) * 0.2f;
+
+                    float val = Mathf.Clamp01(n1 + n2 + nFine - 0.2f);
+
+                    Color c;
+                    if (val < 0.4f)
+                        c = Color.Lerp(darkFurrow, baseBark, val / 0.4f);
+                    else
+                        c = Color.Lerp(baseBark, lightRidge, (val - 0.4f) / 0.6f);
+
+                    pixels[y * width + x] = c;
+                }
+            }
+
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
+
+        public static Texture2D CreateBarkNormalMap(int width = 256, int height = 512)
+        {
+            Texture2D tex = new Texture2D(width, height, TextureFormat.RGBA32, true, true);
+            Color[] pixels = new Color[width * height];
+            float strength = 2.2f;
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    float h = Mathf.PerlinNoise(x * 0.12f + 50f, y * 0.018f + 50f) +
+                              Mathf.PerlinNoise(x * 0.35f + 120f, y * 0.06f + 120f) * 0.4f;
+                    float hx = Mathf.PerlinNoise((x + 1) * 0.12f + 50f, y * 0.018f + 50f) +
+                               Mathf.PerlinNoise((x + 1) * 0.35f + 120f, y * 0.06f + 120f) * 0.4f;
+                    float hy = Mathf.PerlinNoise(x * 0.12f + 50f, (y + 1) * 0.018f + 50f) +
+                               Mathf.PerlinNoise(x * 0.35f + 120f, (y + 1) * 0.06f + 120f) * 0.4f;
+
+                    float dx = (h - hx) * strength;
+                    float dy = (h - hy) * strength * 0.4f; // More vertical depth than horizontal
+
+                    float nx = dx * 0.5f + 0.5f;
+                    float ny = dy * 0.5f + 0.5f;
+                    float nz = 1.0f;
+
+                    pixels[y * width + x] = new Color(nx, ny, nz, 1f);
+                }
+            }
+
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
+
+        // ═══════════════════════════════════════════════
+        //  FOLIAGE TEXTURE & NORMAL MAP — organic leafy look
+        // ═══════════════════════════════════════════════
+
+        public static Texture2D CreateFoliageTexture(int width = 256, int height = 256, Color? baseColor = null)
+        {
+            Texture2D tex = new Texture2D(width, height);
+            Color[] pixels = new Color[width * height];
+
+            Color baseGreen = baseColor ?? new Color(0.18f, 0.42f, 0.12f);
+            Color darkLeaf = baseGreen * 0.65f; darkLeaf.a = 1f;
+            Color sunlitLeaf = new Color(
+                Mathf.Min(1f, baseGreen.r * 1.35f + 0.06f),
+                Mathf.Min(1f, baseGreen.g * 1.25f + 0.08f),
+                baseGreen.b * 0.9f, 1f);
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    // Cellular-like leaf clump noise
+                    float n1 = Mathf.PerlinNoise(x * 0.15f + 80f, y * 0.15f + 80f);
+                    float n2 = Mathf.PerlinNoise(x * 0.45f + 190f, y * 0.45f + 190f) * 0.35f;
+                    float n3 = Mathf.PerlinNoise(x * 1.2f + 320f, y * 1.2f + 320f) * 0.15f;
+
+                    float val = Mathf.Clamp01(n1 + n2 + n3 - 0.15f);
+
+                    Color c;
+                    if (val < 0.45f)
+                        c = Color.Lerp(darkLeaf, baseGreen, val / 0.45f);
+                    else
+                        c = Color.Lerp(baseGreen, sunlitLeaf, (val - 0.45f) / 0.55f);
+
+                    pixels[y * width + x] = c;
+                }
+            }
+
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
+
+        public static Texture2D CreateFoliageNormalMap(int width = 256, int height = 256)
+        {
+            Texture2D tex = new Texture2D(width, height, TextureFormat.RGBA32, true, true);
+            Color[] pixels = new Color[width * height];
+            float strength = 1.6f;
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    float h = Mathf.PerlinNoise(x * 0.2f + 80f, y * 0.2f + 80f) +
+                              Mathf.PerlinNoise(x * 0.6f + 190f, y * 0.6f + 190f) * 0.35f;
+                    float hx = Mathf.PerlinNoise((x + 1) * 0.2f + 80f, y * 0.2f + 80f) +
+                               Mathf.PerlinNoise((x + 1) * 0.6f + 190f, y * 0.6f + 190f) * 0.35f;
+                    float hy = Mathf.PerlinNoise(x * 0.2f + 80f, (y + 1) * 0.2f + 80f) +
+                               Mathf.PerlinNoise(x * 0.6f + 190f, (y + 1) * 0.6f + 190f) * 0.35f;
+
+                    float dx = (h - hx) * strength;
+                    float dy = (h - hy) * strength;
+
+                    float nx = dx * 0.5f + 0.5f;
+                    float ny = dy * 0.5f + 0.5f;
+                    float nz = 1.0f;
+
+                    pixels[y * width + x] = new Color(nx, ny, nz, 1f);
+                }
+            }
+
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
     }
 }

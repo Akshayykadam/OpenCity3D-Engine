@@ -32,6 +32,7 @@ namespace GeoCity3D.Editor
         private bool _includeGrass = true;
         private bool _includeStones = true;
         private bool _includeSignals = false;
+        private float _roadWidthScale = 1.0f;
         private NatureMode _natureMode = NatureMode.ProceduralMesh;
 
         [MenuItem("GeoCity3D/City Generator", false, 1)]
@@ -319,6 +320,7 @@ namespace GeoCity3D.Editor
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.Space(2);
+            _roadWidthScale = EditorGUILayout.Slider("Road Width Scale", _roadWidthScale, 0.8f, 2.0f);
             _includeVehicles = EditorGUILayout.Toggle("Vehicles (Cars)", _includeVehicles);
             _includeTrees = EditorGUILayout.Toggle("Trees & Nature", _includeTrees);
             _includeGrass = EditorGUILayout.Toggle("Grass & Ground Cover", _includeGrass);
@@ -847,7 +849,7 @@ namespace GeoCity3D.Editor
             }
 
             // 6b. Build roads with intelligent bridge chaining (eliminates mid-span dips)
-            List<GameObject> builtRoads = RoadBuilder.BuildRoadNetwork(highwayWays, data, roadMaterials, sidewalkMat, shifter);
+            List<GameObject> builtRoads = RoadBuilder.BuildRoadNetwork(highwayWays, data, roadMaterials, sidewalkMat, shifter, 9.0f, _roadWidthScale);
             foreach (var road in builtRoads)
             {
                 if (road != null)
@@ -868,39 +870,16 @@ namespace GeoCity3D.Editor
             }
 
             // 7. Generate intersection fills where roads meet
-            intersectionCount = GenerateIntersections(intersectionsParent.transform,
-                intersectionMat);
-
-            // Collect intersection centers for traffic signal placement
-            List<Vector3> intersectionCenters = new List<Vector3>();
-            var roadEndsForSignals = RoadBuilder.GetRoadEnds();
-            {
-                float clusterR = 15f;
-                bool[] usedSignal = new bool[roadEndsForSignals.Count];
-                for (int i = 0; i < roadEndsForSignals.Count; i++)
-                {
-                    if (usedSignal[i]) continue;
-                    List<int> cluster = new List<int> { i };
-                    usedSignal[i] = true;
-                    for (int j = i + 1; j < roadEndsForSignals.Count; j++)
-                    {
-                        if (usedSignal[j]) continue;
-                        if (Vector3.Distance(roadEndsForSignals[i].Position, roadEndsForSignals[j].Position) < clusterR)
-                        {
-                            cluster.Add(j);
-                            usedSignal[j] = true;
-                        }
-                    }
-                    if (cluster.Count >= 2)
-                    {
-                        Vector3 center = Vector3.zero;
-                        foreach (int idx in cluster) center += roadEndsForSignals[idx].Position;
-                        center /= cluster.Count;
-                        center.y = 0f;
-                        intersectionCenters.Add(center);
-                    }
-                }
-            }
+            List<Vector3> intersectionCenters;
+            intersectionCount = GenerateIntersections(
+                intersectionsParent.transform,
+                highwayWays,
+                data,
+                shifter,
+                roadMaterials,
+                intersectionMat,
+                sidewalkMat,
+                out intersectionCenters);
 
             // ── Determine generation modes ──
             bool useProceduralNature = (_natureMode == NatureMode.ProceduralMesh);
@@ -925,7 +904,8 @@ namespace GeoCity3D.Editor
 
                     Vector3 pos = shifter.GetLocalPosition(node.Latitude, node.Longitude);
                     if (IsInsideAnyBuilding(pos, buildingBounds) ||
-                        WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 1.0f))
+                        WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 1.0f) ||
+                        RoadSpatialIndex.IsPointOnRoad(pos, 2.0f))
                         continue;
 
                     GameObject treeObj = hasTreePrefabs
@@ -952,14 +932,14 @@ namespace GeoCity3D.Editor
                     {
                         if (!data.Nodes.TryGetValue(way.NodeIds[i], out OsmNode node)) continue;
                         Vector3 pos = shifter.GetLocalPosition(node.Latitude, node.Longitude);
-
                         if (IsInsideAnyBuilding(pos, buildingBounds) ||
-                            WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 1.0f))
+                            WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 1.0f) ||
+                            RoadSpatialIndex.IsPointOnRoad(pos, 2.0f))
                             continue;
 
                         GameObject treeObj = hasTreePrefabs
                             ? TreeBuilder.BuildPrefab(pos, _cityController.TreePrefabs, Random.Range(0.8f, 1.2f))
-                            : TreeBuilder.Build(pos, shader, Random.Range(0.8f, 1.2f), TreeBuilder.TreeShape.Round);
+                            : TreeBuilder.Build(pos, shader, Random.Range(0.8f, 1.2f));
 
                         if (treeObj != null)
                         {
@@ -981,7 +961,8 @@ namespace GeoCity3D.Editor
 
                     Vector3 pos = shifter.GetLocalPosition(node.Latitude, node.Longitude);
                     if (IsInsideAnyBuilding(pos, buildingBounds) ||
-                        WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 0.4f))
+                        WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 0.4f) ||
+                        RoadSpatialIndex.IsPointOnRoad(pos, 1.5f))
                         continue;
 
                     GameObject rockObj = hasRockPrefabs
@@ -1028,7 +1009,8 @@ namespace GeoCity3D.Editor
                         foreach (var g in grassObjects)
                         {
                             if (IsInsideAnyBuilding(g.transform.position, buildingBounds) ||
-                                WaterBuilder.IsPointInWater(g.transform.position, waterAreas, waterways, 0.5f))
+                                WaterBuilder.IsPointInWater(g.transform.position, waterAreas, waterways, 0.5f) ||
+                                RoadSpatialIndex.IsPointOnRoad(g.transform.position, 0.4f))
                             {
                                 Object.DestroyImmediate(g);
                             }
@@ -1051,7 +1033,8 @@ namespace GeoCity3D.Editor
                         foreach (var obj in parkNature)
                         {
                             if (IsInsideAnyBuilding(obj.transform.position, buildingBounds) ||
-                                WaterBuilder.IsPointInWater(obj.transform.position, waterAreas, waterways, 1.2f))
+                                WaterBuilder.IsPointInWater(obj.transform.position, waterAreas, waterways, 1.2f) ||
+                                RoadSpatialIndex.IsPointOnRoad(obj.transform.position, 2.0f))
                             {
                                 Object.DestroyImmediate(obj);
                             }
@@ -1080,7 +1063,8 @@ namespace GeoCity3D.Editor
                             foreach (var t in parkTrees)
                             {
                                 if (IsInsideAnyBuilding(t.transform.position, buildingBounds) ||
-                                    WaterBuilder.IsPointInWater(t.transform.position, waterAreas, waterways, 1.2f))
+                                    WaterBuilder.IsPointInWater(t.transform.position, waterAreas, waterways, 1.2f) ||
+                                    RoadSpatialIndex.IsPointOnRoad(t.transform.position, 2.0f))
                                 {
                                     Object.DestroyImmediate(t);
                                 }
@@ -1101,7 +1085,8 @@ namespace GeoCity3D.Editor
                                 float dist = Mathf.Sqrt(Random.value) * parkRadius * 0.85f;
                                 Vector3 rPos = parkCenters[i] + new Vector3(Mathf.Cos(angle) * dist, 0, Mathf.Sin(angle) * dist);
                                 if (!IsInsideAnyBuilding(rPos, buildingBounds) &&
-                                    !WaterBuilder.IsPointInWater(rPos, waterAreas, waterways, 0.5f))
+                                    !WaterBuilder.IsPointInWater(rPos, waterAreas, waterways, 0.5f) &&
+                                    !RoadSpatialIndex.IsPointOnRoad(rPos, 1.5f))
                                 {
                                     GameObject rObj = RockBuilder.Build(rPos, shader, Random.Range(0.6f, 1.4f));
                                     rObj.transform.SetParent(stonesParent.transform);
@@ -1147,10 +1132,17 @@ namespace GeoCity3D.Editor
                             Vector3 pos = Vector3.Lerp(roadPath[i], roadPath[i + 1], tPos);
 
                             float side = Random.value > 0.5f ? 1f : -1f;
-                            Vector3 treePos = pos + right * side * (5f + Random.Range(0f, 2f));
+                            float segRoadWidth = 9.0f * _roadWidthScale;
+                            if (way.Tags.ContainsKey("width") && float.TryParse(way.Tags["width"].Replace("m", ""), out float parsedW))
+                                segRoadWidth = parsedW * _roadWidthScale;
+                            else if (hwType == "primary" || hwType == "secondary") segRoadWidth = 14f * _roadWidthScale;
+
+                            float treeDist = (segRoadWidth * 0.5f) + 2.0f + 1.8f;
+                            Vector3 treePos = pos + right * side * (treeDist + Random.Range(0f, 1.2f));
 
                             if (!IsInsideAnyBuilding(treePos, buildingBounds) &&
-                                !WaterBuilder.IsPointInWater(treePos, waterAreas, waterways, 1.5f))
+                                !WaterBuilder.IsPointInWater(treePos, waterAreas, waterways, 1.5f) &&
+                                !RoadSpatialIndex.IsPointOnRoad(treePos, 1.2f))
                             {
                                 GameObject tree = hasTreePrefabs
                                     ? TreeBuilder.BuildPrefab(treePos, _cityController.TreePrefabs, Random.Range(0.5f, 1.0f))
@@ -1727,107 +1719,34 @@ namespace GeoCity3D.Editor
         }
 
         // ═══════════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════════════
         //  INTERSECTION FILL GENERATION
         // ═══════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Generates custom polygon meshes that seamlessly connect the incoming roads.
+        /// Generates seamless asphalt road junction caps and perimeter sidewalk corner curbs.
         /// </summary>
-        private int GenerateIntersections(Transform parent, Material defaultMat)
+        private int GenerateIntersections(
+            Transform parent,
+            List<OsmWay> highwayWays,
+            OsmData data,
+            OriginShifter shifter,
+            Dictionary<string, Material> roadMaterials,
+            Material defaultRoadMat,
+            Material defaultSidewalkMat,
+            out List<Vector3> intersectionCenters)
         {
-            var roadEnds = RoadBuilder.GetRoadEnds();
-            if (roadEnds.Count < 2) return 0;
+            intersectionCenters = new List<Vector3>();
+            var junctions = IntersectionBuilder.DetectIntersections(
+                highwayWays, data, shifter, roadMaterials, defaultRoadMat, defaultSidewalkMat, _roadWidthScale);
 
-            float clusterRadius = 15f; // Merge endpoints within 15m
-            bool[] used = new bool[roadEnds.Count];
             int intersectionCount = 0;
-
-            Material sidewalkMat = _cityController.SidewalkMaterial != null
-                ? _cityController.SidewalkMaterial : defaultMat;
-
-            for (int i = 0; i < roadEnds.Count; i++)
+            for (int i = 0; i < junctions.Count; i++)
             {
-                if (used[i]) continue;
-
-                // Find cluster of nearby endpoints
-                List<int> cluster = new List<int> { i };
-                used[i] = true;
-
-                for (int j = i + 1; j < roadEnds.Count; j++)
-                {
-                    if (used[j]) continue;
-                    if (Vector3.Distance(roadEnds[i].Position, roadEnds[j].Position) < clusterRadius)
-                    {
-                        cluster.Add(j);
-                        used[j] = true;
-                    }
-                }
-
-                if (cluster.Count < 2) continue;
-
-                // Compute center
-                Vector3 center = Vector3.zero;
-                foreach (int idx in cluster) center += roadEnds[idx].Position;
-                center /= cluster.Count;
-                center.y = 0f;
-
-                List<Vector3> roadPoly = new List<Vector3>();
-                List<Vector3> sidewalkPoly = new List<Vector3>();
-
-                // Build a radial map of corners
-                foreach (int idx in cluster)
-                {
-                    var end = roadEnds[idx];
-                    Vector3 fwd = end.Direction; // Direction pointing OUT of the road (towards center)
-                    Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
-
-                    float halfRoad = end.Width / 2f;
-                    float sidewalkWidth = 1.5f;
-
-                    // Road corners
-                    Vector3 cornerLeft = end.Position - right * halfRoad;
-                    Vector3 cornerRight = end.Position + right * halfRoad;
-                    cornerLeft.y = 0.10f; // Road level
-                    cornerRight.y = 0.10f;
-                    roadPoly.Add(cornerLeft);
-                    roadPoly.Add(cornerRight);
-
-                    // Sidewalk corners
-                    Vector3 swLeft = end.Position - right * (halfRoad + sidewalkWidth);
-                    Vector3 swRight = end.Position + right * (halfRoad + sidewalkWidth);
-                    // Push them slightly further out to ensure coverage
-                    swLeft += fwd * 0.5f;
-                    swRight += fwd * 0.5f;
-                    swLeft.y = 0.19f; // Sidewalk level
-                    swRight.y = 0.19f;
-                    sidewalkPoly.Add(swLeft);
-                    sidewalkPoly.Add(swRight);
-                }
-
-                // Build a convex hull from the collected corner points
-                roadPoly = GeoCity3D.Geometry.GeometryUtils.GetConvexHull(roadPoly);
-                sidewalkPoly = GeoCity3D.Geometry.GeometryUtils.GetConvexHull(sidewalkPoly);
-
-                // Use the material of the largest road in the cluster
-                Material roadMat = roadEnds[cluster[0]].Material;
-                float maxWidth = roadEnds[cluster[0]].Width;
-                foreach (int idx in cluster)
-                {
-                    if (roadEnds[idx].Width > maxWidth)
-                    {
-                        maxWidth = roadEnds[idx].Width;
-                        roadMat = roadEnds[idx].Material;
-                    }
-                }
-
-                // Build exact-fit meshes
-                GameObject roadMeshObj = CreatePolygonMesh(roadPoly, roadMat, $"Intersection_{intersectionCount}");
-                if (roadMeshObj != null) roadMeshObj.transform.SetParent(parent);
-
-                GameObject swMeshObj = CreatePolygonMesh(sidewalkPoly, sidewalkMat, $"IntersectionSW_{intersectionCount}");
-                if (swMeshObj != null) swMeshObj.transform.SetParent(parent);
-
-                intersectionCount++;
+                var junc = junctions[i];
+                intersectionCenters.Add(junc.Center);
+                GameObject juncObj = IntersectionBuilder.BuildJunction(junc, intersectionCount, parent);
+                if (juncObj != null) intersectionCount++;
             }
 
             return intersectionCount;

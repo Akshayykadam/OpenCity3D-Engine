@@ -210,19 +210,12 @@ namespace GeoCity3D.Visuals
                 mainCam.clearFlags = CameraClearFlags.Skybox;
                 mainCam.farClipPlane = Mathf.Max(mainCam.farClipPlane, cityRadius * 3.5f);
 
-                // Layer-based spherical distance culling:
-                // Unity's C++ camera pipeline skips distant dense micro-geometry automatically
-                float[] cullDistances = new float[32];
-                int grassLayer = LayerMask.NameToLayer("Grass");
-                if (grassLayer >= 0)
-                    cullDistances[grassLayer] = 110f; // Individual grass clumps culled beyond 110m
-
-                int propsLayer = LayerMask.NameToLayer("Props");
-                if (propsLayer >= 0)
-                    cullDistances[propsLayer] = 180f; // Micro props culled beyond 180m
-
-                mainCam.layerCullDistances = cullDistances;
-                mainCam.layerCullSpherical = true;
+                // Note: Combined chunks (via CityCombiner) are batched by material into ~20-30 draw calls.
+                // Using short per-layer cull distances (e.g. 110m/180m) on 350m chunks causes the whole chunk
+                // to be culled whenever its bounding center is out of range, rendering grass invisible in Game View.
+                // Setting layerCullDistances to empty (0) allows standard frustum culling to work cleanly.
+                mainCam.layerCullDistances = new float[32];
+                mainCam.layerCullSpherical = false;
             }
         }
 

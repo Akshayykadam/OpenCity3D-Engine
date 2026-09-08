@@ -168,8 +168,9 @@ namespace GeoCity3D.Geometry
 
                     Vector3 pos = new Vector3(worldX, 0f, worldZ);
 
-                    // Absolute guarantee: never place lot fill in water
-                    if (WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 1.2f))
+                    // Absolute guarantee: never place lot fill in water or on roads
+                    if (WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 1.2f) ||
+                        RoadSpatialIndex.IsPointOnRoad(pos, 1.5f))
                         continue;
 
                     // Decide what to place: 75% trees, 15% bushes, 10% rocks
@@ -213,7 +214,8 @@ namespace GeoCity3D.Geometry
                                 worldX + Random.Range(-cellSize * 0.35f, cellSize * 0.35f),
                                 0.05f,
                                 worldZ + Random.Range(-cellSize * 0.35f, cellSize * 0.35f));
-                            if (!WaterBuilder.IsPointInWater(gPos, waterAreas, waterways, 0.8f))
+                            if (!WaterBuilder.IsPointInWater(gPos, waterAreas, waterways, 0.8f) &&
+                                !RoadSpatialIndex.IsPointOnRoad(gPos, 0.4f))
                             {
                                 GameObject grassObj = GrassBuilder.BuildGrass(gPos, grassPrefabs, shader, Random.Range(0.85f, 1.45f));
                                 if (grassObj != null)
@@ -323,7 +325,8 @@ namespace GeoCity3D.Geometry
                     float worldZ = startZ + (z + 0.5f) * cellSize + Random.Range(-cellSize * 0.25f, cellSize * 0.25f);
                     Vector3 pos = new Vector3(worldX, 0f, worldZ);
 
-                    if (WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 2.0f))
+                    if (WaterBuilder.IsPointInWater(pos, waterAreas, waterways, 2.0f) ||
+                        RoadSpatialIndex.IsPointOnRoad(pos, 1.5f))
                         continue;
 
                     float roll = Random.value;
@@ -355,7 +358,8 @@ namespace GeoCity3D.Geometry
                                 worldX + Random.Range(-cellSize * 0.35f, cellSize * 0.35f),
                                 0.05f,
                                 worldZ + Random.Range(-cellSize * 0.35f, cellSize * 0.35f));
-                            if (!WaterBuilder.IsPointInWater(gPos, waterAreas, waterways, 0.8f))
+                            if (!WaterBuilder.IsPointInWater(gPos, waterAreas, waterways, 0.8f) &&
+                                !RoadSpatialIndex.IsPointOnRoad(gPos, 0.4f))
                             {
                                 GameObject grassObj = GrassBuilder.BuildProceduralTuft(gPos, shader, Random.Range(0.85f, 1.45f));
                                 if (grassObj != null)

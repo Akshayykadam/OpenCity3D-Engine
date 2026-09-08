@@ -140,20 +140,29 @@ namespace GeoCity3D.Geometry
         // ═══════════════════════════════════════════════
 
         /// <summary>
-        /// Smooth a polyline path using Catmull-Rom spline interpolation.
-        /// Each segment is subdivided into 'subdivisions' sub-segments.
+        /// Smooth a polyline path using Centripetal Catmull-Rom spline interpolation (alpha = 0.5).
+        /// Centripetal parameterization guarantees NO self-intersections, cusps, or overshoot loops.
+        /// Preserves exact start and end node positions.
         /// </summary>
         public static List<Vector3> SmoothPath(List<Vector3> points, int subdivisions = 4)
         {
             if (points == null || points.Count < 3) return points;
 
-            // Remove near-duplicate points that cause zero-length segments
+            // Filter out near-duplicate internal points while preserving exact start point
             List<Vector3> clean = new List<Vector3> { points[0] };
-            for (int i = 1; i < points.Count; i++)
+            for (int i = 1; i < points.Count - 1; i++)
             {
-                if (Vector3.Distance(points[i], clean[clean.Count - 1]) > 0.5f)
+                if (Vector3.Distance(points[i], clean[clean.Count - 1]) > 0.4f)
                     clean.Add(points[i]);
             }
+
+            // Always preserve exact end point
+            Vector3 lastPt = points[points.Count - 1];
+            if (Vector3.Distance(clean[clean.Count - 1], lastPt) > 0.1f)
+                clean.Add(lastPt);
+            else
+                clean[clean.Count - 1] = lastPt;
+
             if (clean.Count < 3) return clean;
 
             List<Vector3> result = new List<Vector3>();
@@ -161,36 +170,61 @@ namespace GeoCity3D.Geometry
 
             for (int i = 0; i < n - 1; i++)
             {
-                // Catmull-Rom needs 4 control points: p0, p1, p2, p3
-                // Clamp at endpoints
                 Vector3 p0 = clean[Mathf.Max(i - 1, 0)];
                 Vector3 p1 = clean[i];
-                Vector3 p2 = clean[Mathf.Min(i + 1, n - 1)];
+                Vector3 p2 = clean[i + 1];
                 Vector3 p3 = clean[Mathf.Min(i + 2, n - 1)];
+
+                // Check angle: if turn is extremely sharp (>110 degrees), interpolate linearly to avoid any weird cusp
+                Vector3 seg1 = (p1 - p0).normalized;
+                Vector3 seg2 = (p2 - p1).normalized;
+                bool isSharp = (i > 0 && Vector3.Dot(seg1, seg2) < -0.2f);
 
                 for (int s = 0; s < subdivisions; s++)
                 {
                     float t = (float)s / subdivisions;
-                    result.Add(CatmullRom(p0, p1, p2, p3, t));
+                    if (isSharp)
+                    {
+                        result.Add(Vector3.Lerp(p1, p2, t));
+                    }
+                    else
+                    {
+                        result.Add(CentripetalCatmullRom(p0, p1, p2, p3, t));
+                    }
                 }
             }
 
-            // Add final point
+            // Add final point exactly
             result.Add(clean[n - 1]);
             return result;
         }
 
-        private static Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
+        /// <summary>
+        /// Barry and Goldman's pyramidal formulation of Centripetal Catmull-Rom (alpha = 0.5).
+        /// </summary>
+        private static Vector3 CentripetalCatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
         {
-            float t2 = t * t;
-            float t3 = t2 * t;
+            float dt0 = Mathf.Pow(Mathf.Max(0.0001f, (p1 - p0).sqrMagnitude), 0.25f);
+            float dt1 = Mathf.Pow(Mathf.Max(0.0001f, (p2 - p1).sqrMagnitude), 0.25f);
+            float dt2 = Mathf.Pow(Mathf.Max(0.0001f, (p3 - p2).sqrMagnitude), 0.25f);
 
-            return 0.5f * (
-                (2f * p1) +
-                (-p0 + p2) * t +
-                (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 +
-                (-p0 + 3f * p1 - 3f * p2 + p3) * t3
-            );
+            // Time coordinates along spline
+            float t0 = 0f;
+            float t1 = t0 + dt0;
+            float t2 = t1 + dt1;
+            float t3 = t2 + dt2;
+
+            float curT = Mathf.Lerp(t1, t2, t);
+
+            Vector3 a1 = (t1 - curT) / (t1 - t0) * p0 + (curT - t0) / (t1 - t0) * p1;
+            Vector3 a2 = (t2 - curT) / (t2 - t1) * p1 + (curT - t1) / (t2 - t1) * p2;
+            Vector3 a3 = (t3 - curT) / (t3 - t2) * p2 + (curT - t2) / (t3 - t2) * p3;
+
+            Vector3 b1 = (t2 - curT) / (t2 - t0) * a1 + (curT - t0) / (t2 - t0) * a2;
+            Vector3 b2 = (t3 - curT) / (t3 - t1) * a2 + (curT - t1) / (t3 - t1) * a3;
+
+            Vector3 c = (t2 - curT) / (t2 - t1) * b1 + (curT - t1) / (t2 - t1) * b2;
+            return c;
         }
 
         // ═══════════════════════════════════════════════
