@@ -13,22 +13,6 @@ namespace GeoCity3D.Editor
         private const string SimplePolyRoot = "Assets/SimplePoly City - Low Poly Assets";
         private const string PrefabRoot = SimplePolyRoot + "/Prefab";
 
-        [MenuItem("GeoCity3D/Restore Camera Cull Distances (Fix Invisible Grass)", false, 3)]
-        public static void RestoreCameraCullDistances()
-        {
-            Camera mainCam = Camera.main;
-            if (mainCam != null)
-            {
-                mainCam.layerCullDistances = new float[32];
-                mainCam.layerCullSpherical = false;
-                Debug.Log("GeoCity3D: Reset Camera.layerCullDistances. Grass and combined chunks will now render in Game View!");
-            }
-            else
-            {
-                Debug.LogWarning("GeoCity3D: No MainCamera found in scene.");
-            }
-        }
-
         [MenuItem("GeoCity3D/Setup Scene", false, 2)]
         public static void Setup()
         {
