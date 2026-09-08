@@ -200,6 +200,107 @@ namespace GeoCity3D.Visuals
             return tex;
         }
 
+        /// <summary>
+        /// Generates a crisp tangent-space normal map corresponding to CreateFacadeTexture.
+        /// Accentuates window frames, mullions, protruding sill shelves, and subtle wall plaster.
+        /// </summary>
+        public static Texture2D CreateFacadeNormalMap(int width = 512, int height = 512)
+        {
+            Texture2D tex = new Texture2D(width, height, TextureFormat.RGBA32, true, true);
+            Color[] pixels = new Color[width * height];
+            float[] heightMap = new float[width * height];
+
+            float winL = 0.24f, winR = 0.76f;
+            float winB = 0.16f, winT = 0.72f;
+            float sillB = 0.12f, sillT = winB + 0.01f;
+            float sillL = winL - 0.04f, sillR = winR + 0.04f;
+            float lintB = winT, lintT = 0.76f;
+            float frameThick = 5f / width;
+            float mullX = 0.50f, mullY = 0.46f;
+            float mullThick = 2.5f / width;
+
+            // 1. Build height profile
+            for (int y = 0; y < height; y++)
+            {
+                float v = (float)y / height;
+                for (int x = 0; x < width; x++)
+                {
+                    float u = (float)x / width;
+                    float h = 0.50f; // Base plaster wall
+
+                    // Micro plaster bump
+                    float n = Mathf.PerlinNoise(x * 0.15f + 120f, y * 0.15f + 120f);
+                    h += (n - 0.5f) * 0.04f;
+
+                    if (u > winL + frameThick && u < winR - frameThick &&
+                        v > winB + frameThick && v < winT - frameThick)
+                    {
+                        // Glass interior — recessed
+                        bool onMullX = Mathf.Abs(u - mullX) < mullThick;
+                        bool onMullY = Mathf.Abs(v - mullY) < mullThick;
+                        if (onMullX || onMullY)
+                        {
+                            h = 0.60f; // Protruding mullion bar
+                        }
+                        else
+                        {
+                            h = 0.25f; // Flat recessed glass pane
+                        }
+                    }
+                    else if (u >= winL && u <= winR && v >= winB && v <= winT)
+                    {
+                        h = 0.65f; // Window outer frame
+                    }
+                    else if (u >= sillL && u <= sillR && v >= sillB && v <= sillT)
+                    {
+                        // Angled stone sill shelf
+                        float sv = (v - sillB) / Mathf.Max(sillT - sillB, 0.001f);
+                        h = 0.75f + sv * 0.15f;
+                    }
+                    else if (u >= winL - 0.02f && u <= winR + 0.02f && v >= lintB && v <= lintT)
+                    {
+                        h = 0.68f; // Lintel header
+                    }
+
+                    heightMap[y * width + x] = h;
+                }
+            }
+
+            // 2. Compute Sobel/finite difference normals
+            float strength = 4.0f;
+            for (int y = 0; y < height; y++)
+            {
+                int ym = (y - 1 + height) % height;
+                int yp = (y + 1) % height;
+                for (int x = 0; x < width; x++)
+                {
+                    int xm = (x - 1 + width) % width;
+                    int xp = (x + 1) % width;
+
+                    float hL = heightMap[y * width + xm];
+                    float hR = heightMap[y * width + xp];
+                    float hD = heightMap[ym * width + x];
+                    float hU = heightMap[yp * width + x];
+
+                    float dx = (hL - hR) * strength;
+                    float dy = (hD - hU) * strength;
+
+                    Vector3 normal = new Vector3(dx, dy, 1.0f).normalized;
+                    pixels[y * width + x] = new Color(
+                        normal.x * 0.5f + 0.5f,
+                        normal.y * 0.5f + 0.5f,
+                        normal.z * 0.5f + 0.5f,
+                        1f);
+                }
+            }
+
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
+
         // ═══════════════════════════════════════════════
         // ROOF TEXTURE — flat concrete slab (Indian style)
         // ═══════════════════════════════════════════════
@@ -242,7 +343,7 @@ namespace GeoCity3D.Visuals
 
             tex.SetPixels(pixels);
             tex.Apply();
-            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.wrapMode = TextureWrapMode.Repeat;
             tex.filterMode = FilterMode.Bilinear;
             return tex;
         }
@@ -714,33 +815,131 @@ namespace GeoCity3D.Visuals
         }
 
         // ═══════════════════════════════════
-        // WATER — deep blue
+        // WATER — vibrant stylized aquatic texture with caustics
         // ═══════════════════════════════════
 
         public static Texture2D CreateWaterTexture(int width = 512, int height = 512)
         {
-            Texture2D tex = new Texture2D(width, height);
+            Texture2D tex = new Texture2D(width, height, TextureFormat.RGBA32, true);
             Color[] pixels = new Color[width * height];
 
-            Color deep = new Color(0.06f, 0.18f, 0.38f);
-            Color mid = new Color(0.12f, 0.28f, 0.46f);
-            Color light = new Color(0.20f, 0.38f, 0.52f);
+            Color deepOcean = new Color(0.05f, 0.20f, 0.42f, 0.90f);    // Deep marine core
+            Color vibrantCyan = new Color(0.09f, 0.48f, 0.68f, 0.82f);  // Translucent turquoise body
+            Color shallowCyan = new Color(0.20f, 0.66f, 0.82f, 0.75f);  // Sunny shallow shimmer
+            Color causticLight = new Color(0.65f, 0.92f, 0.96f, 0.85f); // Sun caustics & ripple edges
+            Color foamCrest = new Color(0.90f, 0.98f, 1.00f, 0.95f);    // Foam highlight crests
 
             for (int y = 0; y < height; y++)
             {
+                float ny = (float)y / height;
+                float wrapY = Mathf.Sin(ny * Mathf.PI * 2f);
+                float cosY = Mathf.Cos(ny * Mathf.PI * 2f);
+
                 for (int x = 0; x < width; x++)
                 {
-                    float w1 = Mathf.PerlinNoise(x * 0.02f + 500f, y * 0.04f + 500f);
-                    float w2 = Mathf.PerlinNoise(x * 0.06f + 700f, y * 0.015f + 700f);
+                    float nx = (float)x / width;
+                    float wrapX = Mathf.Sin(nx * Mathf.PI * 2f);
+                    float cosX = Mathf.Cos(nx * Mathf.PI * 2f);
 
-                    Color c = Color.Lerp(deep, mid, w1 * 0.6f + w2 * 0.4f);
-                    c = Color.Lerp(c, light, Mathf.Clamp01(w1 * w2 * 2f - 0.3f));
+                    // Seamless 4D toroidal noise sampling using wrap coordinates
+                    float w1 = Mathf.PerlinNoise(wrapX * 1.8f + 120f, wrapY * 1.8f + 120f);
+                    float w2 = Mathf.PerlinNoise(cosX * 2.6f + 250f, cosY * 2.6f + 250f);
+                    float w3 = Mathf.PerlinNoise(wrapX * 5.2f + 400f, wrapY * 5.2f + 400f);
 
-                    float grain = (Random.value - 0.5f) * 0.01f;
-                    c += new Color(grain * 0.3f, grain * 0.6f, grain);
+                    // Base water depth gradient
+                    float depthFactor = w1 * 0.55f + w2 * 0.45f;
+                    Color c = Color.Lerp(deepOcean, vibrantCyan, depthFactor);
+                    c = Color.Lerp(c, shallowCyan, Mathf.Clamp01((w2 - 0.4f) * 1.8f));
 
-                    c.a = 1f;
+                    // Caustic network: thin bright interconnected rings
+                    float causticNoise = Mathf.Abs(w1 - w2) * 3.2f + w3 * 0.6f;
+                    float causticVal = 1f - Mathf.Abs(causticNoise - 0.85f);
+                    if (causticVal > 0.72f)
+                    {
+                        float causticIntensity = Mathf.SmoothStep(0.72f, 0.95f, causticVal);
+                        c = Color.Lerp(c, causticLight, causticIntensity * 0.45f);
+                    }
+
+                    // Crest foam highlights
+                    float crest = w3 * w1;
+                    if (crest > 0.48f)
+                    {
+                        float crestIntensity = (crest - 0.48f) / 0.52f;
+                        c = Color.Lerp(c, foamCrest, crestIntensity * 0.35f);
+                    }
+
                     pixels[y * width + x] = c;
+                }
+            }
+
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
+
+        // ═══════════════════════════════════
+        // WATER NORMAL MAP — multi-frequency waves and ripple facets
+        // ═══════════════════════════════════
+
+        public static Texture2D CreateWaterNormalMap(int width = 512, int height = 512)
+        {
+            Texture2D tex = new Texture2D(width, height, TextureFormat.RGBA32, true, true);
+            Color[] pixels = new Color[width * height];
+
+            float strength = 2.4f;
+
+            for (int y = 0; y < height; y++)
+            {
+                int yNext = (y + 1) % height;
+                float ny0 = (float)y / height;
+                float ny1 = (float)yNext / height;
+
+                float wy0 = Mathf.Sin(ny0 * Mathf.PI * 2f);
+                float cy0 = Mathf.Cos(ny0 * Mathf.PI * 2f);
+                float wy1 = Mathf.Sin(ny1 * Mathf.PI * 2f);
+                float cy1 = Mathf.Cos(ny1 * Mathf.PI * 2f);
+
+                for (int x = 0; x < width; x++)
+                {
+                    int xNext = (x + 1) % width;
+                    float nx0 = (float)x / width;
+                    float nx1 = (float)xNext / width;
+
+                    float wx0 = Mathf.Sin(nx0 * Mathf.PI * 2f);
+                    float cx0 = Mathf.Cos(nx0 * Mathf.PI * 2f);
+                    float wx1 = Mathf.Sin(nx1 * Mathf.PI * 2f);
+                    float cx1 = Mathf.Cos(nx1 * Mathf.PI * 2f);
+
+                    // Multi-frequency wave heights with seamless toroidal coordinates
+                    // 1. Broad rolling swells
+                    float h0 = Mathf.PerlinNoise(wx0 * 2.2f + 100f, wy0 * 2.2f + 100f) * 0.55f;
+                    float hx = Mathf.PerlinNoise(wx1 * 2.2f + 100f, wy0 * 2.2f + 100f) * 0.55f;
+                    float hy = Mathf.PerlinNoise(wx0 * 2.2f + 100f, wy1 * 2.2f + 100f) * 0.55f;
+
+                    // 2. Angled cross-ripples (simulating wind chop)
+                    h0 += Mathf.PerlinNoise(cx0 * 4.5f + cy0 * 2.0f + 250f, cy0 * 4.5f - cx0 * 2.0f + 250f) * 0.30f;
+                    hx += Mathf.PerlinNoise(cx1 * 4.5f + cy0 * 2.0f + 250f, cy0 * 4.5f - cx1 * 2.0f + 250f) * 0.30f;
+                    hy += Mathf.PerlinNoise(cx0 * 4.5f + cy1 * 2.0f + 250f, cy1 * 4.5f - cx0 * 2.0f + 250f) * 0.30f;
+
+                    // 3. Fine capillary surface wavelets (producing sparkling specular highlights)
+                    h0 += Mathf.PerlinNoise(wx0 * 9.0f + 500f, wy0 * 9.0f + 500f) * 0.15f;
+                    hx += Mathf.PerlinNoise(wx1 * 9.0f + 500f, wy0 * 9.0f + 500f) * 0.15f;
+                    hy += Mathf.PerlinNoise(wx0 * 9.0f + 500f, wy1 * 9.0f + 500f) * 0.15f;
+
+                    // Height differentials
+                    float dx = (h0 - hx) * strength;
+                    float dy = (h0 - hy) * strength;
+
+                    Vector3 normal = new Vector3(dx, dy, 1.0f).normalized;
+
+                    // Pack into tangent space [0, 1]
+                    pixels[y * width + x] = new Color(
+                        normal.x * 0.5f + 0.5f,
+                        normal.y * 0.5f + 0.5f,
+                        normal.z * 0.5f + 0.5f,
+                        1f);
                 }
             }
 

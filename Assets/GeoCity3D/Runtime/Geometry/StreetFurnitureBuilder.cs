@@ -72,7 +72,7 @@ namespace GeoCity3D.Geometry
                     Vector3 point = Vector3.Lerp(a, b, pos / segLen);
                     float offset = rightSide ? 5.5f : -5.5f;
                     Vector3 lightPos = point + right * offset;
-                    lightPos.y = 0f;
+                    lightPos.y = point.y;
 
                     GameObject light = BuildStreetLight(lightPos, dir);
                     lights.Add(light);
@@ -118,7 +118,7 @@ namespace GeoCity3D.Geometry
                     Vector3 point = Vector3.Lerp(a, b, pos / segLen);
                     float offset = rightSide ? 5.5f : -5.5f;
                     Vector3 lightPos = point + right * offset;
-                    lightPos.y = 0f;
+                    lightPos.y = point.y;
 
                     GameObject prefab = prefabs[Random.Range(0, prefabs.Length)];
                     float yAngle = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
@@ -129,8 +129,8 @@ namespace GeoCity3D.Geometry
                         Quaternion.Euler(0f, yAngle, 0f));
                     light.name = $"StreetLight_{lights.Count}";
 
-                    // Auto-scale to target ~6m height
-                    AutoScaleAndGround(light, 6f);
+                    // Auto-scale to target ~6m height and ground to road surface
+                    AutoScaleAndGround(light, 6f, point.y);
 
                     lights.Add(light);
                     rightSide = !rightSide;
@@ -178,7 +178,7 @@ namespace GeoCity3D.Geometry
                     Vector3 point = Vector3.Lerp(a, b, pos / segLen);
                     float offset = rightSide ? 6.5f : -6.5f;
                     Vector3 propPos = point + right * offset;
-                    propPos.y = 0f;
+                    propPos.y = point.y;
 
                     GameObject prefab = propPrefabs[Random.Range(0, propPrefabs.Length)];
                     float yAngle = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
@@ -187,8 +187,8 @@ namespace GeoCity3D.Geometry
                         Quaternion.Euler(0f, yAngle + Random.Range(-15f, 15f), 0f));
                     prop.name = $"StreetProp_{props.Count}";
 
-                    // Auto-scale to target ~1.2m height
-                    AutoScaleAndGround(prop, 1.2f);
+                    // Auto-scale to target ~1.2m height and ground to road surface
+                    AutoScaleAndGround(prop, 1.2f, point.y);
 
                     props.Add(prop);
                     rightSide = !rightSide;
@@ -240,7 +240,7 @@ namespace GeoCity3D.Geometry
         /// <summary>
         /// Auto-scale a prefab instance to a target height and ground it at y=0.
         /// </summary>
-        private static void AutoScaleAndGround(GameObject obj, float targetHeight)
+        private static void AutoScaleAndGround(GameObject obj, float targetHeight, float targetGroundY = 0f)
         {
             Renderer[] renderers = obj.GetComponentsInChildren<Renderer>();
             if (renderers.Length == 0) return;
@@ -264,7 +264,7 @@ namespace GeoCity3D.Geometry
                 for (int i = 1; i < renderers.Length; i++)
                     fb.Encapsulate(renderers[i].bounds);
                 Vector3 p = obj.transform.position;
-                p.y -= fb.min.y;
+                p.y += (targetGroundY - fb.min.y);
                 obj.transform.position = p;
             }
         }

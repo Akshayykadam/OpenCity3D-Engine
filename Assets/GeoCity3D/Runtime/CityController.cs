@@ -29,6 +29,7 @@ namespace GeoCity3D
         [Header("Building Materials")]
         public Material BuildingWallMaterial;
         public Material BuildingRoofMaterial;
+        public Material BuildingWindowMaterial;
 
         [Header("Road Materials")]
         public Material MotorwayMaterial;
@@ -57,9 +58,10 @@ namespace GeoCity3D
         [Header("Vehicle Prefabs")]
         public GameObject[] VehiclePrefabs;
 
-        [Header("Nature Prefabs (Parks)")]
+        [Header("Nature Prefabs (Parks & Greenery)")]
         public GameObject[] BushPrefabs;
         public GameObject[] RockPrefabs;
+        public GameObject[] GrassPrefabs;
 
         // Backward compatibility
         public Material BuildingMaterial => BuildingWallMaterial;

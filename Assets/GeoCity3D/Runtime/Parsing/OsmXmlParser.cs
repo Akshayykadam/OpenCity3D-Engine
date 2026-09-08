@@ -146,15 +146,39 @@ namespace GeoCity3D.Parsing
                 // Check if this relation represents a building or building part
                 if (!rel.HasTag("building") && !rel.HasTag("building:part")) continue;
 
+                // Check if this relation has building:part members or outlines
+                bool hasPartMembers = false;
+                foreach (var member in rel.Members)
+                {
+                    if (member.Type == "way")
+                    {
+                        if (member.Role == "part") hasPartMembers = true;
+                        if (member.Role == "outline" && data.WaysById.TryGetValue(member.Ref, out OsmWay outlineWay))
+                        {
+                            outlineWay.AddTag("_building_outline", "yes");
+                        }
+                    }
+                }
+
+                // If this is a type=building relation with 3D parts, do not synthesize an outer envelope
+                // because the individual parts define the 3D geometry!
+                if (relType == "building" && hasPartMembers) continue;
+
                 // Collect outer member ways
                 List<OsmWay> outerWays = new List<OsmWay>();
                 foreach (var member in rel.Members)
                 {
                     if (member.Type != "way") continue;
+
+                    if (data.WaysById.TryGetValue(member.Ref, out OsmWay memberWay))
+                    {
+                        memberWay.AddTag("_multipolygon_member", "yes");
+                    }
+
                     // Accept "outer" role or empty role (default = outer)
                     if (member.Role != "outer" && member.Role != "") continue;
 
-                    if (data.WaysById.TryGetValue(member.Ref, out OsmWay memberWay))
+                    if (memberWay != null)
                     {
                         outerWays.Add(memberWay);
                     }
@@ -211,10 +235,16 @@ namespace GeoCity3D.Parsing
                 foreach (var member in rel.Members)
                 {
                     if (member.Type != "way") continue;
+
+                    if (data.WaysById.TryGetValue(member.Ref, out OsmWay memberWay))
+                    {
+                        memberWay.AddTag("_multipolygon_member", "yes");
+                    }
+
                     // Accept "outer" role or empty role (default = outer)
                     if (member.Role != "outer" && member.Role != "") continue;
 
-                    if (data.WaysById.TryGetValue(member.Ref, out OsmWay memberWay))
+                    if (memberWay != null)
                     {
                         outerWays.Add(memberWay);
                     }

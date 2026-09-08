@@ -44,7 +44,7 @@ namespace GeoCity3D.Geometry
                     Vector3 point = Vector3.Lerp(a, b, pos / segLen);
                     float offset = rightSide ? 2.5f : -2.5f;
                     Vector3 vehiclePos = point + right * offset;
-                    vehiclePos.y = 0f;
+                    vehiclePos.y = point.y;
 
                     GameObject prefab = vehiclePrefabs[Random.Range(0, vehiclePrefabs.Length)];
 
@@ -78,7 +78,7 @@ namespace GeoCity3D.Geometry
                             vehicle.transform.localScale = Vector3.one * (4f / maxDim);
                         }
 
-                        // Ground the vehicle
+                        // Ground the vehicle onto the road surface
                         renderers = vehicle.GetComponentsInChildren<Renderer>();
                         if (renderers.Length > 0)
                         {
@@ -86,7 +86,7 @@ namespace GeoCity3D.Geometry
                             for (int r = 1; r < renderers.Length; r++)
                                 fb.Encapsulate(renderers[r].bounds);
                             Vector3 p = vehicle.transform.position;
-                            p.y -= fb.min.y;
+                            p.y += (point.y - fb.min.y);
                             vehicle.transform.position = p;
                         }
                     }

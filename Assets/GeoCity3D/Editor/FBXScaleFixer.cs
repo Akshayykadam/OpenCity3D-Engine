@@ -3,7 +3,6 @@ using UnityEditor;
 
 public class FBXScaleFixer
 {
-    [MenuItem("GeoCity3D/Fix FBX Scales")]
     public static void FixScales()
     {
         string[] guids = AssetDatabase.FindAssets("t:Model", new[] { "Assets/Residential Buildings Set" });

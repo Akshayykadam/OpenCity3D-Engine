@@ -5,7 +5,6 @@ namespace GeoCity3D.Editor
 {
     public static class MaterialFixer
     {
-        [MenuItem("GeoCity3D/Fix SimplePoly Materials (Convert to URP)")]
         public static void FixSimplePolyMaterials()
         {
             string[] folders = new[] { "Assets/SimplePoly City - Low Poly Assets" };

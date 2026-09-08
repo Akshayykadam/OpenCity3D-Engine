@@ -84,7 +84,8 @@ namespace GeoCity3D.Geometry
         /// </summary>
         public static GameObject Build(OsmWay way, OsmData data,
             Dictionary<string, Material> roadMaterials, Material sidewalkMaterial,
-            OriginShifter originShifter, float defaultWidth = 6.0f)
+            OriginShifter originShifter, float defaultWidth = 6.0f,
+            bool rampAtStart = true, bool rampAtEnd = true)
         {
             List<Vector3> path = new List<Vector3>();
 
@@ -111,9 +112,28 @@ namespace GeoCity3D.Geometry
             // ── Check if this is a bridge ──
             bool isBridge = way.HasTag("bridge") && (way.GetTag("bridge") ?? "").ToLower() != "no";
 
+            if (isBridge)
+            {
+                GameObject bridgeObj = BridgeBuilder.Build(path, width, roadMat, sidewalkMaterial, way.Id, highwayType, rampAtStart, rampAtEnd);
+                if (bridgeObj != null && path.Count >= 2)
+                {
+                    if (rampAtStart)
+                    {
+                        Vector3 dirStart = (path[0] - path[1]).normalized;
+                        _roadEnds.Add(new RoadEnd { Position = path[0], Direction = dirStart, Width = width, Material = roadMat, RoadClass = roadClass });
+                    }
+                    if (rampAtEnd)
+                    {
+                        Vector3 dirEnd = (path[path.Count - 1] - path[path.Count - 2]).normalized;
+                        _roadEnds.Add(new RoadEnd { Position = path[path.Count - 1], Direction = dirEnd, Width = width, Material = roadMat, RoadClass = roadClass });
+                    }
+                }
+                return bridgeObj;
+            }
+
             // ── Apply curve smoothing ──
             // Higher subdivisions for major roads, lower for minor ones
-            if (!isBridge && path.Count >= 3)
+            if (path.Count >= 3)
             {
                 int subdivisions = (roadClass == "motorway" || roadClass == "primary") ? 6 : 4;
                 path = GeometryUtils.SmoothPath(path, subdivisions);
@@ -143,11 +163,6 @@ namespace GeoCity3D.Geometry
                     Material = roadMat,
                     RoadClass = roadClass
                 });
-            }
-
-            if (isBridge)
-            {
-                return BridgeBuilder.Build(path, width, roadMat, sidewalkMaterial, way.Id, highwayType);
             }
 
             // ── Normal road ──
@@ -233,7 +248,19 @@ namespace GeoCity3D.Geometry
         public static GameObject CreateSolidStrip(List<Vector3> path, float width,
             float surfaceY, float thickness, Material material, string name)
         {
-            if (path.Count < 2) return null;
+            return CreateSolidStrip(path, width, surfaceY, thickness, material, name, usePathY: false);
+        }
+
+        public static GameObject CreateSolidStrip(List<Vector3> path, float width,
+            float thickness, Material material, string name)
+        {
+            return CreateSolidStrip(path, width, 0f, thickness, material, name, usePathY: true);
+        }
+
+        public static GameObject CreateSolidStrip(List<Vector3> path, float width,
+            float surfaceY, float thickness, Material material, string name, bool usePathY)
+        {
+            if (path == null || path.Count < 2) return null;
 
             GameObject go = new GameObject(name);
             MeshFilter mf = go.AddComponent<MeshFilter>();
@@ -248,7 +275,6 @@ namespace GeoCity3D.Geometry
             List<Vector2> uvs = new List<Vector2>();
 
             float halfWidth = width / 2.0f;
-            float bottomY = surfaceY - thickness;
             float uvY = 0;
             float uvScale = 1f / width;
 
@@ -258,14 +284,17 @@ namespace GeoCity3D.Geometry
                 Vector3 forward = GetForward(path, i);
                 Vector3 right = Vector3.Cross(Vector3.up, forward).normalized;
 
+                float curSurfaceY = usePathY ? current.y : surfaceY;
+                float curBottomY = curSurfaceY - thickness;
+
                 Vector3 leftTop = current - right * halfWidth;
-                leftTop.y = surfaceY;
+                leftTop.y = curSurfaceY;
                 Vector3 rightTop = current + right * halfWidth;
-                rightTop.y = surfaceY;
+                rightTop.y = curSurfaceY;
                 Vector3 leftBot = current - right * halfWidth;
-                leftBot.y = bottomY;
+                leftBot.y = curBottomY;
                 Vector3 rightBot = current + right * halfWidth;
-                rightBot.y = bottomY;
+                rightBot.y = curBottomY;
 
                 verts.Add(leftTop);   // idx + 0
                 verts.Add(rightTop);  // idx + 1
@@ -362,6 +391,210 @@ namespace GeoCity3D.Geometry
             }
 
             return path[path.Count - 1];
+        }
+
+        // ── Road Network Builder with Intelligent Bridge Chaining ──
+
+        private class BridgeChain
+        {
+            public List<long> NodeIds = new List<long>();
+            public List<Vector3> Path = new List<Vector3>();
+            public float Width;
+            public string HighwayType;
+            public string RoadClass;
+            public Material RoadMat;
+            public long Id;
+        }
+
+        /// <summary>
+        /// Builds complete road network with intelligent bridge chaining and seamless continuity.
+        /// Chained contiguous bridge ways avoid mid-span dips and clustered piers.
+        /// </summary>
+        public static List<GameObject> BuildRoadNetwork(
+            List<OsmWay> highwayWays,
+            OsmData data,
+            Dictionary<string, Material> roadMaterials,
+            Material sidewalkMaterial,
+            OriginShifter originShifter,
+            float defaultWidth = 6.0f)
+        {
+            List<GameObject> result = new List<GameObject>();
+            if (highwayWays == null || highwayWays.Count == 0) return result;
+
+            List<OsmWay> bridgeWays = new List<OsmWay>();
+            List<OsmWay> groundWays = new List<OsmWay>();
+
+            foreach (var way in highwayWays)
+            {
+                string hwType = (way.GetTag("highway") ?? "").ToLower();
+                if (FootpathTypes.Contains(hwType)) continue;
+
+                bool isBridge = way.HasTag("bridge") && (way.GetTag("bridge") ?? "").ToLower() != "no";
+                if (isBridge) bridgeWays.Add(way);
+                else groundWays.Add(way);
+            }
+
+            List<BridgeChain> chains = new List<BridgeChain>();
+
+            foreach (var way in bridgeWays)
+            {
+                List<Vector3> path = new List<Vector3>();
+                List<long> validNodeIds = new List<long>();
+                foreach (long nid in way.NodeIds)
+                {
+                    if (data.Nodes.TryGetValue(nid, out OsmNode node))
+                    {
+                        path.Add(originShifter.GetLocalPosition(node.Latitude, node.Longitude));
+                        validNodeIds.Add(nid);
+                    }
+                }
+                if (path.Count < 2) continue;
+
+                float width = DetermineWidth(way, defaultWidth);
+                string hwType = (way.GetTag("highway") ?? "").ToLower();
+                string roadClass = ClassifyRoad(hwType);
+                Material roadMat = roadMaterials.ContainsKey(roadClass) ? roadMaterials[roadClass] : roadMaterials.Values.FirstOrDefault();
+
+                chains.Add(new BridgeChain
+                {
+                    NodeIds = validNodeIds,
+                    Path = path,
+                    Width = width,
+                    HighwayType = hwType,
+                    RoadClass = roadClass,
+                    RoadMat = roadMat,
+                    Id = way.Id
+                });
+            }
+
+            // Repeatedly chain contiguous bridge ways that share start/end nodes or endpoints
+            bool mergedAny = true;
+            while (mergedAny)
+            {
+                mergedAny = false;
+                for (int i = 0; i < chains.Count; i++)
+                {
+                    var c1 = chains[i];
+                    for (int j = i + 1; j < chains.Count; j++)
+                    {
+                        var c2 = chains[j];
+                        if (Mathf.Abs(c1.Width - c2.Width) > 3.0f) continue;
+
+                        long c1StartN = c1.NodeIds[0];
+                        long c1EndN = c1.NodeIds[c1.NodeIds.Count - 1];
+                        long c2StartN = c2.NodeIds[0];
+                        long c2EndN = c2.NodeIds[c2.NodeIds.Count - 1];
+
+                        Vector3 c1StartP = c1.Path[0];
+                        Vector3 c1EndP = c1.Path[c1.Path.Count - 1];
+                        Vector3 c2StartP = c2.Path[0];
+                        Vector3 c2EndP = c2.Path[c2.Path.Count - 1];
+
+                        if (c1EndN == c2StartN || Vector3.Distance(c1EndP, c2StartP) < 1.0f)
+                        {
+                            // c1 -> c2
+                            for (int k = 1; k < c2.Path.Count; k++)
+                            {
+                                c1.Path.Add(c2.Path[k]);
+                                c1.NodeIds.Add(c2.NodeIds[k]);
+                            }
+                            chains.RemoveAt(j);
+                            mergedAny = true;
+                            break;
+                        }
+                        else if (c1EndN == c2EndN || Vector3.Distance(c1EndP, c2EndP) < 1.0f)
+                        {
+                            // c2 is reversed, append backwards
+                            for (int k = c2.Path.Count - 2; k >= 0; k--)
+                            {
+                                c1.Path.Add(c2.Path[k]);
+                                c1.NodeIds.Add(c2.NodeIds[k]);
+                            }
+                            chains.RemoveAt(j);
+                            mergedAny = true;
+                            break;
+                        }
+                        else if (c1StartN == c2EndN || Vector3.Distance(c1StartP, c2EndP) < 1.0f)
+                        {
+                            // c2 -> c1
+                            for (int k = c1.Path.Count - 1; k >= 1; k--)
+                            {
+                                c2.Path.Add(c1.Path[k]);
+                                c2.NodeIds.Add(c1.NodeIds[k]);
+                            }
+                            chains[i] = c2;
+                            chains.RemoveAt(j);
+                            mergedAny = true;
+                            break;
+                        }
+                        else if (c1StartN == c2StartN || Vector3.Distance(c1StartP, c2StartP) < 1.0f)
+                        {
+                            // c1 reversed + c2
+                            c1.Path.Reverse();
+                            c1.NodeIds.Reverse();
+                            for (int k = 1; k < c2.Path.Count; k++)
+                            {
+                                c1.Path.Add(c2.Path[k]);
+                                c1.NodeIds.Add(c2.NodeIds[k]);
+                            }
+                            chains.RemoveAt(j);
+                            mergedAny = true;
+                            break;
+                        }
+                    }
+                    if (mergedAny) break;
+                }
+            }
+
+            // Build chained bridges with endpoint continuity checks
+            for (int i = 0; i < chains.Count; i++)
+            {
+                var bc = chains[i];
+                Vector3 sP = bc.Path[0];
+                Vector3 eP = bc.Path[bc.Path.Count - 1];
+
+                bool connectedStart = false;
+                bool connectedEnd = false;
+
+                for (int j = 0; j < chains.Count; j++)
+                {
+                    if (i == j) continue;
+                    var other = chains[j];
+                    if (Vector3.Distance(sP, other.Path[0]) < 1.5f || Vector3.Distance(sP, other.Path[other.Path.Count - 1]) < 1.5f)
+                        connectedStart = true;
+                    if (Vector3.Distance(eP, other.Path[0]) < 1.5f || Vector3.Distance(eP, other.Path[other.Path.Count - 1]) < 1.5f)
+                        connectedEnd = true;
+                }
+
+                bool rampAtStart = !connectedStart;
+                bool rampAtEnd = !connectedEnd;
+
+                GameObject bObj = BridgeBuilder.Build(bc.Path, bc.Width, bc.RoadMat, sidewalkMaterial, bc.Id, bc.HighwayType, rampAtStart, rampAtEnd);
+                if (bObj != null)
+                {
+                    result.Add(bObj);
+
+                    if (rampAtStart && bc.Path.Count >= 2)
+                    {
+                        Vector3 dirStart = (bc.Path[0] - bc.Path[1]).normalized;
+                        _roadEnds.Add(new RoadEnd { Position = bc.Path[0], Direction = dirStart, Width = bc.Width, Material = bc.RoadMat, RoadClass = bc.RoadClass });
+                    }
+                    if (rampAtEnd && bc.Path.Count >= 2)
+                    {
+                        Vector3 dirEnd = (bc.Path[bc.Path.Count - 1] - bc.Path[bc.Path.Count - 2]).normalized;
+                        _roadEnds.Add(new RoadEnd { Position = bc.Path[bc.Path.Count - 1], Direction = dirEnd, Width = bc.Width, Material = bc.RoadMat, RoadClass = bc.RoadClass });
+                    }
+                }
+            }
+
+            // Build standard ground roads
+            foreach (var way in groundWays)
+            {
+                GameObject road = Build(way, data, roadMaterials, sidewalkMaterial, originShifter, defaultWidth);
+                if (road != null) result.Add(road);
+            }
+
+            return result;
         }
     }
 }

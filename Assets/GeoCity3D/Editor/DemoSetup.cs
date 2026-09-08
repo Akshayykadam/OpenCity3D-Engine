@@ -13,7 +13,7 @@ namespace GeoCity3D.Editor
         private const string SimplePolyRoot = "Assets/SimplePoly City - Low Poly Assets";
         private const string PrefabRoot = SimplePolyRoot + "/Prefab";
 
-        [MenuItem("GeoCity3D/Setup Demo Scene")]
+        [MenuItem("GeoCity3D/Setup Scene", false, 2)]
         public static void Setup()
         {
             CityController controller = Object.FindFirstObjectByType<CityController>();
@@ -83,7 +83,7 @@ namespace GeoCity3D.Editor
             }
 
             // ═══════════════════════════════════════════════════════════
-            //  BUSH & ROCK PREFABS (parks)
+            //  BUSH, ROCK & GRASS PREFABS (parks & green land)
             // ═══════════════════════════════════════════════════════════
             if (hasSimplePoly)
             {
@@ -91,7 +91,9 @@ namespace GeoCity3D.Editor
                     new[] { "Bush", "Pot Bush" });
                 controller.RockPrefabs = LoadPrefabsFromFolder($"{PrefabRoot}/Natures",
                     new[] { "Rock" });
-                Debug.Log($"DemoSetup: Loaded {controller.BushPrefabs.Length} bush + {controller.RockPrefabs.Length} rock prefabs.");
+                controller.GrassPrefabs = LoadPrefabsFromFolder($"{PrefabRoot}/Natures",
+                    new[] { "Grass Tile", "Grass Bar", "Grass Tile Small" });
+                Debug.Log($"DemoSetup: Loaded {controller.BushPrefabs.Length} bush + {controller.RockPrefabs.Length} rock + {controller.GrassPrefabs.Length} grass prefabs.");
             }
 
             // ═══════════════════════════════════════════════════════════
@@ -167,8 +169,7 @@ namespace GeoCity3D.Editor
                 new Color(0.18f, 0.40f, 0.12f), 0.1f);
             controller.ParkMaterial = CreateSolidMaterial(matPath, "ParkMat", shader,
                 new Color(0.18f, 0.55f, 0.12f), 0.05f);
-            controller.WaterMaterial = CreateSolidMaterial(matPath, "WaterMat", shader,
-                new Color(0.15f, 0.30f, 0.38f), 0.6f);
+            controller.WaterMaterial = CreateWaterMaterialAsset(matPath, "WaterMat", shader);
 
             // ── Setup Skybox ──
             Material skyMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/BOXOPHOBIC/Skybox Cubemap Extended/Demo/Materials/Polyverse Skies - Blue Sky.mat");
@@ -190,7 +191,6 @@ namespace GeoCity3D.Editor
             Debug.Log($"Demo Scene Setup Complete! Mode: {modeStr}. Open 'GeoCity3D > City Generator' to build a city.");
         }
 
-        [MenuItem("GeoCity3D/Apply Blue Sky Skybox")]
         public static void ApplyBlueSkySkybox()
         {
             string matPath = "Assets/BOXOPHOBIC/Skybox Cubemap Extended/Demo/Materials/Polyverse Skies - Blue Sky.mat";
@@ -293,6 +293,52 @@ namespace GeoCity3D.Editor
             if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", smoothness);
             if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
             mat.renderQueue = 2000;
+            mat.enableInstancing = true;
+
+            AssetDatabase.CreateAsset(mat, matAssetPath);
+            return mat;
+        }
+
+        private static Material CreateWaterMaterialAsset(string folder, string matName, Shader shader)
+        {
+            string matAssetPath = $"{folder}/{matName}.mat";
+
+            if (AssetDatabase.LoadAssetAtPath<Material>(matAssetPath) != null)
+                AssetDatabase.DeleteAsset(matAssetPath);
+
+            Material mat = new Material(shader);
+            mat.name = matName;
+
+            // Vibrant translucent cyan-blue tint
+            Color waterColor = new Color(0.10f, 0.48f, 0.70f, 0.82f);
+            mat.color = waterColor;
+
+            // High gloss & subtle metallic sheen for light reflections
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.96f);
+            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.96f);
+            if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.15f);
+
+            // Procedural aquatic caustic texture and wave normal map
+            Texture2D waterTex = TextureGenerator.CreateWaterTexture(512, 512);
+            Texture2D waterNormal = TextureGenerator.CreateWaterNormalMap(512, 512);
+
+            mat.mainTexture = waterTex;
+            if (mat.HasProperty("_BumpMap") && waterNormal != null)
+            {
+                mat.SetTexture("_BumpMap", waterNormal);
+                mat.EnableKeyword("_NORMALMAP");
+                mat.SetFloat("_BumpScale", 1.25f);
+            }
+
+            // Transparency configuration for Standard / Lit
+            if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f); // URP
+            mat.SetFloat("_Mode", 3f); // Standard transparent mode
+            mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            mat.SetInt("_ZWrite", 0);
+            mat.EnableKeyword("_ALPHABLEND_ON");
+            mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            mat.renderQueue = 3000;
             mat.enableInstancing = true;
 
             AssetDatabase.CreateAsset(mat, matAssetPath);

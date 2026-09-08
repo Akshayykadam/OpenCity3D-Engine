@@ -33,9 +33,17 @@ namespace GeoCity3D.Geometry
             Transform parent,
             float cellSize = 8f,
             List<WaterAreaInfo> waterAreas = null,
-            List<WaterwayInfo> waterways = null)
+            List<WaterwayInfo> waterways = null,
+            GameObject[] grassPrefabs = null,
+            Transform grassParent = null,
+            Shader shader = null)
         {
-            if (treePrefabs == null || treePrefabs.Length == 0) return 0;
+            bool hasTrees = treePrefabs != null && treePrefabs.Length > 0;
+            bool hasBushes = bushPrefabs != null && bushPrefabs.Length > 0;
+            bool hasRocks = rockPrefabs != null && rockPrefabs.Length > 0;
+            bool hasGrass = (grassPrefabs != null && grassPrefabs.Length > 0) || (shader != null && grassParent != null);
+
+            if (!hasTrees && !hasBushes && !hasRocks && !hasGrass) return 0;
 
             int placedCount = 0;
 
@@ -156,34 +164,56 @@ namespace GeoCity3D.Geometry
 
                     // Decide what to place: 75% trees, 15% bushes, 10% rocks
                     float roll = Random.value;
-                    GameObject prefab;
+                    GameObject prefab = null;
 
-                    if (roll < 0.75f && treePrefabs.Length > 0)
+                    if (roll < 0.75f && hasTrees)
                     {
                         prefab = treePrefabs[Random.Range(0, treePrefabs.Length)];
                     }
-                    else if (roll < 0.85f && bushPrefabs != null && bushPrefabs.Length > 0)
+                    else if (roll < 0.85f && hasBushes)
                     {
                         prefab = bushPrefabs[Random.Range(0, bushPrefabs.Length)];
                     }
-                    else if (rockPrefabs != null && rockPrefabs.Length > 0)
+                    else if (hasRocks)
                     {
                         prefab = rockPrefabs[Random.Range(0, rockPrefabs.Length)];
                     }
-                    else
+                    else if (hasTrees)
                     {
                         prefab = treePrefabs[Random.Range(0, treePrefabs.Length)];
                     }
 
-                    float yRot = Random.Range(0f, 360f);
-                    GameObject obj = Object.Instantiate(prefab, pos, Quaternion.Euler(0f, yRot, 0f));
-                    obj.name = $"LotFill_{placedCount}";
+                    if (prefab != null)
+                    {
+                        float yRot = Random.Range(0f, 360f);
+                        GameObject obj = Object.Instantiate(prefab, pos, Quaternion.Euler(0f, yRot, 0f));
+                        obj.name = $"LotFill_{placedCount}";
+                        GroundObject(obj);
+                        obj.transform.SetParent(parent, true);
+                        placedCount++;
+                    }
 
-                    // Ground the object
-                    GroundObject(obj);
-
-                    obj.transform.SetParent(parent, true);
-                    placedCount++;
+                    // Populate lush grass clusters in empty parcels
+                    if (hasGrass)
+                    {
+                        int grassTufts = Random.Range(1, 4);
+                        for (int g = 0; g < grassTufts; g++)
+                        {
+                            Vector3 gPos = new Vector3(
+                                worldX + Random.Range(-cellSize * 0.35f, cellSize * 0.35f),
+                                0.05f,
+                                worldZ + Random.Range(-cellSize * 0.35f, cellSize * 0.35f));
+                            if (!WaterBuilder.IsPointInWater(gPos, waterAreas, waterways, 0.8f))
+                            {
+                                GameObject grassObj = GrassBuilder.BuildGrass(gPos, grassPrefabs, shader, Random.Range(0.85f, 1.45f));
+                                if (grassObj != null)
+                                {
+                                    grassObj.transform.SetParent(grassParent != null ? grassParent : parent, true);
+                                    placedCount++;
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -240,11 +270,13 @@ namespace GeoCity3D.Geometry
             Transform parent,
             bool includeTrees = true,
             bool includeStones = true,
+            bool includeGrass = true,
+            Transform grassParent = null,
             float cellSize = 10f,
             List<WaterAreaInfo> waterAreas = null,
             List<WaterwayInfo> waterways = null)
         {
-            if (!includeTrees && !includeStones) return 0;
+            if (!includeTrees && !includeStones && !includeGrass) return 0;
 
             int placedCount = 0;
             float startX = cityBounds.min.x;
@@ -301,6 +333,28 @@ namespace GeoCity3D.Geometry
                         obj.name = $"LotFill_Proc_{placedCount}";
                         obj.transform.SetParent(parent, true);
                         placedCount++;
+                    }
+
+                    // Procedural grass tufts in empty parcel ground
+                    if (includeGrass && shader != null)
+                    {
+                        int grassTufts = Random.Range(1, 4);
+                        for (int g = 0; g < grassTufts; g++)
+                        {
+                            Vector3 gPos = new Vector3(
+                                worldX + Random.Range(-cellSize * 0.35f, cellSize * 0.35f),
+                                0.05f,
+                                worldZ + Random.Range(-cellSize * 0.35f, cellSize * 0.35f));
+                            if (!WaterBuilder.IsPointInWater(gPos, waterAreas, waterways, 0.8f))
+                            {
+                                GameObject grassObj = GrassBuilder.BuildProceduralTuft(gPos, shader, Random.Range(0.85f, 1.45f));
+                                if (grassObj != null)
+                                {
+                                    grassObj.transform.SetParent(grassParent != null ? grassParent : parent, true);
+                                    placedCount++;
+                                }
+                            }
+                        }
                     }
                 }
             }

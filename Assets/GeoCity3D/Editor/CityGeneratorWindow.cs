@@ -27,13 +27,14 @@ namespace GeoCity3D.Editor
         private float _buildingCornerRadius = 1.8f;
         private bool _includeRiver = true;
         private bool _includeLake = true;
-        private bool _includeVehicles = true;
+        private bool _includeVehicles = false;
         private bool _includeTrees = true;
+        private bool _includeGrass = true;
         private bool _includeStones = true;
-        private bool _includeSignals = true;
+        private bool _includeSignals = false;
         private NatureMode _natureMode = NatureMode.ProceduralMesh;
 
-        [MenuItem("GeoCity3D/City Generator")]
+        [MenuItem("GeoCity3D/City Generator", false, 1)]
         public static void ShowWindow()
         {
             GetWindow<CityGeneratorWindow>("City Generator");
@@ -49,6 +50,30 @@ namespace GeoCity3D.Editor
             if (_cityController == null)
             {
                 _cityController = Object.FindFirstObjectByType<CityController>();
+            }
+
+            if (_cityController != null && (_cityController.GrassPrefabs == null || _cityController.GrassPrefabs.Length == 0))
+            {
+                string[] guids = AssetDatabase.FindAssets("Natures_Grass Tile Small t:Prefab");
+                if (guids.Length > 0)
+                {
+                    List<GameObject> grassList = new List<GameObject>();
+                    string[] names = new[] { "Natures_Grass Tile", "Natures_Grass Bar", "Natures_Grass Tile Small" };
+                    foreach (var name in names)
+                    {
+                        string[] matches = AssetDatabase.FindAssets($"{name} t:Prefab");
+                        foreach (var g in matches)
+                        {
+                            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(g));
+                            if (prefab != null && !grassList.Contains(prefab)) grassList.Add(prefab);
+                        }
+                    }
+                    if (grassList.Count > 0)
+                    {
+                        _cityController.GrassPrefabs = grassList.ToArray();
+                        EditorUtility.SetDirty(_cityController);
+                    }
+                }
             }
         }
 
@@ -163,6 +188,7 @@ namespace GeoCity3D.Editor
             {
                 _includeVehicles = true;
                 _includeTrees = true;
+                _includeGrass = true;
                 _includeStones = true;
                 _includeSignals = true;
             }
@@ -170,6 +196,7 @@ namespace GeoCity3D.Editor
             {
                 _includeVehicles = false;
                 _includeTrees = false;
+                _includeGrass = false;
                 _includeStones = false;
                 _includeSignals = false;
             }
@@ -178,8 +205,9 @@ namespace GeoCity3D.Editor
             EditorGUILayout.Space(2);
             _includeVehicles = EditorGUILayout.Toggle("Vehicles (Cars)", _includeVehicles);
             _includeTrees = EditorGUILayout.Toggle("Trees & Nature", _includeTrees);
+            _includeGrass = EditorGUILayout.Toggle("Grass & Ground Cover", _includeGrass);
             _includeStones = EditorGUILayout.Toggle("Stones & Rocks", _includeStones);
-            if (_includeTrees || _includeStones)
+            if (_includeTrees || _includeStones || _includeGrass)
             {
                 _natureMode = (NatureMode)EditorGUILayout.EnumPopup("Nature Mode", _natureMode);
             }
@@ -191,6 +219,8 @@ namespace GeoCity3D.Editor
         {
             Material mat = new Material(shader);
             mat.color = color;
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
             if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", smoothness);
             if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", smoothness);
             if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
@@ -204,7 +234,11 @@ namespace GeoCity3D.Editor
         {
             Material mat = new Material(shader);
             mat.mainTexture = texture;
+            if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", texture);
+            if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", texture);
             mat.color = Color.white;
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", Color.white);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", Color.white);
             if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", smoothness);
             if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", smoothness);
             if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
@@ -217,10 +251,29 @@ namespace GeoCity3D.Editor
         private Material CreateWaterMaterial(Shader shader)
         {
             Material mat = new Material(shader);
-            mat.color = new Color(0.12f, 0.35f, 0.55f, 0.85f); // Deep translucent blue
-            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.95f);
-            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.95f);
-            if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.4f);
+            mat.name = "WaterMat_Procedural";
+            Color waterColor = new Color(0.10f, 0.48f, 0.70f, 0.82f); // Vibrant translucent cyan-blue
+            mat.color = waterColor;
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", waterColor);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", waterColor);
+
+            Texture2D waterTex = TextureGenerator.CreateWaterTexture(512, 512);
+            Texture2D waterNormal = TextureGenerator.CreateWaterNormalMap(512, 512);
+
+            mat.mainTexture = waterTex;
+            if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", waterTex);
+            if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", waterTex);
+            if (mat.HasProperty("_BumpMap") && waterNormal != null)
+            {
+                mat.SetTexture("_BumpMap", waterNormal);
+                mat.EnableKeyword("_NORMALMAP");
+                mat.SetFloat("_BumpScale", 1.25f);
+            }
+
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.96f);
+            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.96f);
+            if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.15f);
+
             // Enable transparency
             if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f); // URP Transparent
             mat.SetFloat("_Mode", 3f); // Standard shader transparent mode
@@ -230,6 +283,24 @@ namespace GeoCity3D.Editor
             mat.EnableKeyword("_ALPHABLEND_ON");
             mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
             mat.renderQueue = 3000; // Transparent queue
+            mat.enableInstancing = true;
+            return mat;
+        }
+
+        // ── Deep reflective tinted glass material for building windows ──
+        private Material CreateGlassMaterial(Shader shader)
+        {
+            Material mat = new Material(shader);
+            mat.name = "BuildingGlass_Procedural";
+            Color glassColor = new Color(0.12f, 0.20f, 0.32f, 1.0f);
+            mat.color = glassColor;
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", glassColor);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", glassColor);
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.92f);
+            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.92f);
+            if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.50f);
+            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
+            mat.renderQueue = 2000;
             mat.enableInstancing = true;
             return mat;
         }
@@ -305,18 +376,28 @@ namespace GeoCity3D.Editor
                 yield break;
             }
 
+            GrassBuilder.ResetMaterialPool();
+
             // ═══════════════════════════════════════════════════════════
             // 5. MATERIALS — Procedural textured materials
             // ═══════════════════════════════════════════════════════════
 
             // ── Building Materials ──
-            // In Procedural mode, we enforce identical building structure & materials
+            // Textured architectural facade with normal-mapped window frames, sills, and reflective glass
+            Texture2D facadeNormalMap = TextureGenerator.CreateFacadeNormalMap();
+            yield return null;
             Material buildingMat = _cityController.BuildingWallMaterial != null 
                 ? _cityController.BuildingWallMaterial 
-                : CreateSolidMaterial(shader, new Color(0.88f, 0.88f, 0.86f), 0.25f);
+                : CreateTexturedMaterial(shader, TextureGenerator.CreateFacadeTexture(512, 512, new Color(0.92f, 0.91f, 0.89f)), facadeNormalMap, 0.25f);
+            yield return null;
             Material roofMat = _cityController.BuildingRoofMaterial != null 
                 ? _cityController.BuildingRoofMaterial 
-                : CreateSolidMaterial(shader, new Color(0.35f, 0.35f, 0.38f), 0.15f);
+                : CreateTexturedMaterial(shader, TextureGenerator.CreateRoofTexture(256, 256, new Color(0.38f, 0.38f, 0.40f)), 0.15f);
+            yield return null;
+            Material windowMat = _cityController.BuildingWindowMaterial != null
+                ? _cityController.BuildingWindowMaterial
+                : CreateGlassMaterial(shader);
+            yield return null;
 
             // Roads
             Texture2D roadNormalMap = TextureGenerator.CreateAsphaltNormalMap();
@@ -381,22 +462,28 @@ namespace GeoCity3D.Editor
             signalsParent.transform.SetParent(cityRoot.transform);
             GameObject lotFillParent = new GameObject("LotFill");
             lotFillParent.transform.SetParent(cityRoot.transform);
+            GameObject grassParent = new GameObject("Grass");
+            grassParent.transform.SetParent(cityRoot.transform);
 
             int buildingCount = 0, roadCount = 0, parkCount = 0, waterCount = 0, beachCount = 0, treeCount = 0, stoneCount = 0;
-            int intersectionCount = 0, vehicleCount = 0, propCount = 0, signalCount = 0, lotFillCount = 0;
+            int intersectionCount = 0, vehicleCount = 0, propCount = 0, signalCount = 0, lotFillCount = 0, grassCount = 0;
 
             // Clear intersection data from previous generation
             RoadBuilder.ClearIntersectionData();
             StreetFurnitureBuilder.ResetMaterialPool();
             TreeBuilder.ResetMaterialPool();
             RockBuilder.ResetMaterialPool();
+            GrassBuilder.ResetMaterialPool();
 
             List<Bounds> buildingBounds = new List<Bounds>();
             List<Bounds> roadBounds = new List<Bounds>();
+            List<Bounds> beachBounds = new List<Bounds>();
+            List<OsmWay> highwayWays = new List<OsmWay>();
             List<WaterAreaInfo> waterAreas = new List<WaterAreaInfo>();
             List<WaterwayInfo> waterways = new List<WaterwayInfo>();
             List<Vector3> parkCenters = new List<Vector3>();
             List<float> parkSizes = new List<float>();
+            List<List<Vector3>> parkPolys = new List<List<Vector3>>();
 
             // Pre-pass: Catalog all water bodies (polygons and linear waterways) upfront
             // so buildings, parks, street trees, street furniture, and lot filler never spawn inside water.
@@ -426,10 +513,15 @@ namespace GeoCity3D.Editor
                 }
             }
 
+            // ── Resolve & Deduplicate Buildings (OSM 3D Simple Buildings Specification) ──
+            HashSet<long> validBuildingWayIds = ResolveAndDeduplicateBuildings(data, shifter);
+
             foreach (var way in data.Ways)
             {
                 if (way.HasTag("building") || way.HasTag("building:part"))
                 {
+                    if (!validBuildingWayIds.Contains(way.Id)) continue;
+
                     GameObject building = null;
 
                     bool isLandmarkOrMultipolygon = way.Id < 0 || way.HasTag("building:part");
@@ -527,7 +619,7 @@ namespace GeoCity3D.Editor
                     else
                     {
                         // ── PROCEDURAL MODE ── identical architectural structures with rounded corners
-                        building = BuildingBuilder.Build(way, data, buildingMat, roofMat, shifter);
+                        building = BuildingBuilder.Build(way, data, buildingMat, roofMat, shifter, windowMat);
                     }
 
                     if (building != null)
@@ -551,24 +643,9 @@ namespace GeoCity3D.Editor
                 else if (way.HasTag("highway"))
                 {
                     string hwType = (way.GetTag("highway") ?? "").ToLower();
-                    // Skip noisy minor pedestrian paths to keep the 3D road network clean
-                    if (RoadBuilder.FootpathTypes.Contains(hwType)) continue;
-
-                    GameObject road = RoadBuilder.Build(way, data, roadMaterials, sidewalkMat, shifter);
-                    if (road != null)
+                    if (!RoadBuilder.FootpathTypes.Contains(hwType))
                     {
-                        road.transform.SetParent(roadsParent.transform);
-                        roadCount++;
-
-                        // Track road bounds for lot filler
-                        Renderer[] roadRenderers = road.GetComponentsInChildren<Renderer>();
-                        if (roadRenderers.Length > 0)
-                        {
-                            Bounds rb = roadRenderers[0].bounds;
-                            for (int ri = 1; ri < roadRenderers.Length; ri++)
-                                rb.Encapsulate(roadRenderers[ri].bounds);
-                            roadBounds.Add(rb);
-                        }
+                        highwayWays.Add(way);
                     }
                 }
                 else if (IsArea(way, "park") || IsArea(way, "grass") || IsArea(way, "forest")
@@ -601,6 +678,7 @@ namespace GeoCity3D.Editor
                                 maxDist = Mathf.Max(maxDist, Vector3.Distance(center, p));
                             parkCenters.Add(center);
                             parkSizes.Add(maxDist);
+                            parkPolys.Add(parkPoints);
                         }
                     }
                 }
@@ -611,6 +689,15 @@ namespace GeoCity3D.Editor
                     {
                         beach.transform.SetParent(beachesParent.transform);
                         beachCount++;
+
+                        Renderer[] bRenderers = beach.GetComponentsInChildren<Renderer>();
+                        if (bRenderers.Length > 0)
+                        {
+                            Bounds bb = bRenderers[0].bounds;
+                            for (int bi = 1; bi < bRenderers.Length; bi++)
+                                bb.Encapsulate(bRenderers[bi].bounds);
+                            beachBounds.Add(bb);
+                        }
                     }
                 }
                 else if (IsWaterArea(way))
@@ -630,6 +717,27 @@ namespace GeoCity3D.Editor
                     {
                         river.transform.SetParent(waterParent.transform);
                         waterCount++;
+                    }
+                }
+            }
+
+            // 6b. Build roads with intelligent bridge chaining (eliminates mid-span dips)
+            List<GameObject> builtRoads = RoadBuilder.BuildRoadNetwork(highwayWays, data, roadMaterials, sidewalkMat, shifter);
+            foreach (var road in builtRoads)
+            {
+                if (road != null)
+                {
+                    road.transform.SetParent(roadsParent.transform);
+                    roadCount++;
+
+                    // Track road bounds for lot filler and grass scattering
+                    Renderer[] roadRenderers = road.GetComponentsInChildren<Renderer>();
+                    if (roadRenderers.Length > 0)
+                    {
+                        Bounds rb = roadRenderers[0].bounds;
+                        for (int ri = 1; ri < roadRenderers.Length; ri++)
+                            rb.Encapsulate(roadRenderers[ri].bounds);
+                        roadBounds.Add(rb);
                     }
                 }
             }
@@ -674,6 +782,7 @@ namespace GeoCity3D.Editor
             bool hasTreePrefabs = !useProceduralNature && _cityController.TreePrefabs != null && _cityController.TreePrefabs.Length > 0;
             bool hasBushPrefabs = !useProceduralNature && _cityController.BushPrefabs != null && _cityController.BushPrefabs.Length > 0;
             bool hasRockPrefabs = !useProceduralNature && _cityController.RockPrefabs != null && _cityController.RockPrefabs.Length > 0;
+            bool hasGrassPrefabs = !useProceduralNature && _cityController.GrassPrefabs != null && _cityController.GrassPrefabs.Length > 0;
             bool hasLightPrefabs = _cityController.StreetLightPrefabs != null && _cityController.StreetLightPrefabs.Length > 0;
             bool hasSignalPrefabs = _cityController.TrafficSignalPrefabs != null && _cityController.TrafficSignalPrefabs.Length > 0;
             bool hasPropPrefabs = _cityController.StreetPropPrefabs != null && _cityController.StreetPropPrefabs.Length > 0;
@@ -764,12 +873,47 @@ namespace GeoCity3D.Editor
             }
 
             // ── 8d. PARKS & WOODLANDS (Procedural Mesh or Prefab) ──
-            if (_includeTrees || _includeStones)
+            if (_includeTrees || _includeStones || _includeGrass)
             {
                 for (int i = 0; i < parkCenters.Count; i++)
                 {
                     float parkRadius = Mathf.Max(parkSizes[i] * 0.85f, 8f);
                     int treeCountInPark = Mathf.Clamp(Mathf.RoundToInt(parkRadius * parkRadius * 0.04f), 6, 60);
+
+                    // ── Grass in park / green land ──
+                    if (_includeGrass)
+                    {
+                        int grassTuftsInPark = Mathf.Clamp(Mathf.RoundToInt(parkRadius * parkRadius * 0.08f), 8, 80);
+                        List<GameObject> grassObjects;
+                        if (i < parkPolys.Count && parkPolys[i].Count >= 3)
+                        {
+                            grassObjects = GrassBuilder.ScatterInPolygon(
+                                parkPolys[i], grassTuftsInPark,
+                                hasGrassPrefabs ? _cityController.GrassPrefabs : null,
+                                shader, 0.05f);
+                        }
+                        else
+                        {
+                            grassObjects = GrassBuilder.ScatterInCircle(
+                                parkCenters[i], parkRadius, grassTuftsInPark,
+                                hasGrassPrefabs ? _cityController.GrassPrefabs : null,
+                                shader, 0.05f);
+                        }
+
+                        foreach (var g in grassObjects)
+                        {
+                            if (IsInsideAnyBuilding(g.transform.position, buildingBounds) ||
+                                WaterBuilder.IsPointInWater(g.transform.position, waterAreas, waterways, 0.5f))
+                            {
+                                Object.DestroyImmediate(g);
+                            }
+                            else
+                            {
+                                g.transform.SetParent(grassParent.transform);
+                                grassCount++;
+                            }
+                        }
+                    }
 
                     if (hasTreePrefabs || hasRockPrefabs)
                     {
@@ -997,14 +1141,15 @@ namespace GeoCity3D.Editor
             }
 
             // 13. Fill empty lots with vegetation (excluding buildings, roads, and all water areas/corridors)
-            if (_includeTrees || _includeStones)
+            if (_includeTrees || _includeStones || _includeGrass)
             {
                 Bounds cityBounds = new Bounds(Vector3.zero, Vector3.one * _radius * 2f);
-                if (hasTreePrefabs)
+                if (hasTreePrefabs || hasBushPrefabs || hasRockPrefabs || hasGrassPrefabs)
                 {
                     GameObject[] lotTrees = _includeTrees ? _cityController.TreePrefabs : null;
                     GameObject[] lotBushes = _includeTrees ? _cityController.BushPrefabs : null;
                     GameObject[] lotRocks = _includeStones ? _cityController.RockPrefabs : null;
+                    GameObject[] lotGrass = _includeGrass ? _cityController.GrassPrefabs : null;
 
                     lotFillCount = LotFiller.FillEmptyLots(
                         cityBounds, buildingBounds, roadBounds,
@@ -1014,7 +1159,10 @@ namespace GeoCity3D.Editor
                         lotFillParent.transform,
                         8f,
                         waterAreas,
-                        waterways);
+                        waterways,
+                        lotGrass,
+                        grassParent.transform,
+                        shader);
                 }
                 else
                 {
@@ -1024,11 +1172,32 @@ namespace GeoCity3D.Editor
                         lotFillParent.transform,
                         _includeTrees,
                         _includeStones,
+                        _includeGrass,
+                        grassParent.transform,
                         10f,
                         waterAreas,
                         waterways);
                 }
-                Debug.Log($"Lot Fill: placed {lotFillCount} vegetation objects in empty spaces.");
+                Debug.Log($"Lot Fill: placed {lotFillCount} vegetation & grass objects in empty spaces.");
+            }
+
+            // 13b. 3D Grass across all open green parts (ground platform, riverbanks, lawns)
+            if (_includeGrass)
+            {
+                bool useGrassPrefabs = hasGrassPrefabs && _natureMode == NatureMode.Prefab;
+                int groundGrassCount = GrassBuilder.ScatterGroundGreenery(
+                    grassParent.transform,
+                    _radius,
+                    buildingBounds,
+                    roadBounds,
+                    waterAreas,
+                    waterways,
+                    beachBounds,
+                    useGrassPrefabs ? _cityController.GrassPrefabs : null,
+                    shader,
+                    7.0f);
+                grassCount += groundGrassCount;
+                Debug.Log($"CityGenerator: Planted {groundGrassCount} 3D grass clumps across all green terrain & riverbanks.");
             }
 
             // 14. Scene atmosphere (lighting, fog, post-processing)
@@ -1040,10 +1209,20 @@ namespace GeoCity3D.Editor
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(intersectionsParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(parksParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(waterParent);
+            if (waterCount > 0)
+            {
+                WaterAnimator wAnim = waterParent.GetComponent<WaterAnimator>();
+                if (wAnim == null) wAnim = waterParent.AddComponent<WaterAnimator>();
+                wAnim.TargetMaterial = waterMat;
+                wAnim.IsRiver = true;
+                wAnim.FlowSpeed = 0.12f;
+            }
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(beachesParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(treesParent);
             if (stonesParent.transform.childCount > 0)
                 GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(stonesParent);
+            if (grassParent.transform.childCount > 0)
+                GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(grassParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(lightsParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(vehiclesParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(propsParent);
@@ -1056,6 +1235,7 @@ namespace GeoCity3D.Editor
             // Smaller objects: occludee only (hidden by buildings, but don't block others)
             SetStaticFlags(treesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(stonesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(grassParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(lightsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(vehiclesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(propsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
@@ -1068,7 +1248,7 @@ namespace GeoCity3D.Editor
             SetStaticFlags(waterParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(beachesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
 
-            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}, Stones: {stoneCount}, StreetLights: {streetLightCount}, Vehicles: {vehicleCount}, Props: {propCount}, TrafficSignals: {signalCount}, LotFill: {lotFillCount}");
+            Debug.Log($"Generation Complete! Buildings: {buildingCount}, Roads: {roadCount}, Intersections: {intersectionCount}, Parks: {parkCount}, Water: {waterCount}, Beaches: {beachCount}, Trees: {treeCount}, Stones: {stoneCount}, Grass: {grassCount}, StreetLights: {streetLightCount}, Vehicles: {vehicleCount}, Props: {propCount}, TrafficSignals: {signalCount}, LotFill: {lotFillCount}");
             _isGenerating = false;
         }
 
@@ -1141,6 +1321,199 @@ namespace GeoCity3D.Editor
                 pool = new List<GameObject>(allPrefabs); // fallback
 
             return pool[Random.Range(0, pool.Count)];
+        }
+
+        private class BuildingCandidateInfo
+        {
+            public OsmWay Way;
+            public bool IsPart;
+            public List<Vector3> Footprint;
+            public Vector3 Centroid;
+            public float Area;
+            public Bounds Bounds;
+            public float MinHeight;
+            public float MaxHeight;
+        }
+
+        /// <summary>
+        /// Applies the OpenStreetMap Simple 3D Buildings specification:
+        /// 1. Outer building=* envelope outlines that contain building:part=* features are treated
+        ///    as 2D boundary outlines only and are NOT extruded as solid buildings.
+        /// 2. Member ways of multipolygon relations and relation outline ways are skipped.
+        /// 3. Concentric/duplicate footprints (&lt; 2m centroid distance, similar area) are deduplicated,
+        ///    while preserving vertically stacked tiers (different min_height).
+        /// 4. Outer campus perimeters enclosing multiple standalone buildings are suppressed.
+        /// </summary>
+        private HashSet<long> ResolveAndDeduplicateBuildings(OsmData data, OriginShifter shifter)
+        {
+            List<BuildingCandidateInfo> parts = new List<BuildingCandidateInfo>();
+            List<BuildingCandidateInfo> outlines = new List<BuildingCandidateInfo>();
+
+            foreach (var way in data.Ways)
+            {
+                bool hasBuilding = way.HasTag("building") && (way.GetTag("building") ?? "").ToLower() != "no";
+                bool hasPart = way.HasTag("building:part") && (way.GetTag("building:part") ?? "").ToLower() != "no";
+                if (!hasBuilding && !hasPart) continue;
+
+                // Skip member ways of multipolygon relations and relation outline ways
+                if (way.HasTag("_multipolygon_member") || way.HasTag("_building_outline")) continue;
+
+                List<Vector3> footprint = BuildingBuilder.ExtractFootprint(way, data, shifter);
+                if (footprint == null || footprint.Count < 3) continue;
+
+                float area = Mathf.Abs(BuildingBuilder.PolygonArea(footprint));
+                if (area < 4f) continue;
+
+                Vector3 centroid = BuildingBuilder.ComputeCentroid(footprint);
+                Bounds bounds = new Bounds(centroid, Vector3.zero);
+                for (int i = 0; i < footprint.Count; i++)
+                    bounds.Encapsulate(footprint[i]);
+
+                float minH = BuildingBuilder.DetermineMinHeight(way);
+                float totalH = BuildingBuilder.DetermineHeight(way, area);
+                float maxH = Mathf.Max(minH + 3f, totalH);
+
+                var info = new BuildingCandidateInfo
+                {
+                    Way = way,
+                    IsPart = hasPart,
+                    Footprint = footprint,
+                    Centroid = centroid,
+                    Area = area,
+                    Bounds = bounds,
+                    MinHeight = minH,
+                    MaxHeight = maxH
+                };
+
+                if (hasPart)
+                    parts.Add(info);
+                else
+                    outlines.Add(info);
+            }
+
+            // RULE 1: Filter out 2D building outlines that contain 3D building:part elements
+            // (Standard OSM 3D Buildings specification: outer outline is an envelope only)
+            List<BuildingCandidateInfo> activeCandidates = new List<BuildingCandidateInfo>(parts);
+
+            foreach (var outline in outlines)
+            {
+                bool isEnvelopeForParts = false;
+                foreach (var part in parts)
+                {
+                    // Broad phase
+                    if (!outline.Bounds.Intersects(part.Bounds)) continue;
+
+                    // Narrow phase 1: Part centroid inside outline polygon
+                    if (GeometryUtils.PointInPolygon(part.Centroid.x, part.Centroid.z, outline.Footprint))
+                    {
+                        isEnvelopeForParts = true;
+                        break;
+                    }
+
+                    // Narrow phase 2: Centroids close and overlapping bounding box
+                    if (Vector3.Distance(outline.Centroid, part.Centroid) < 3.5f)
+                    {
+                        isEnvelopeForParts = true;
+                        break;
+                    }
+
+                    // Narrow phase 3: Sample part vertices inside outline
+                    int insideCount = 0;
+                    for (int i = 0; i < part.Footprint.Count; i++)
+                    {
+                        if (GeometryUtils.PointInPolygon(part.Footprint[i].x, part.Footprint[i].z, outline.Footprint))
+                            insideCount++;
+                    }
+                    if (insideCount > part.Footprint.Count / 2)
+                    {
+                        isEnvelopeForParts = true;
+                        break;
+                    }
+                }
+
+                if (!isEnvelopeForParts)
+                {
+                    activeCandidates.Add(outline);
+                }
+            }
+
+            // RULE 2: Filter out large campus/plot perimeters enclosing multiple separate building outlines
+            bool[] suppressed = new bool[activeCandidates.Count];
+            for (int i = 0; i < activeCandidates.Count; i++)
+            {
+                if (suppressed[i]) continue;
+                var a = activeCandidates[i];
+                if (a.IsPart) continue;
+
+                int enclosedCount = 0;
+                for (int j = 0; j < activeCandidates.Count; j++)
+                {
+                    if (i == j || suppressed[j]) continue;
+                    var b = activeCandidates[j];
+                    if (a.Area > b.Area * 1.5f && a.Bounds.Intersects(b.Bounds))
+                    {
+                        if (GeometryUtils.PointInPolygon(b.Centroid.x, b.Centroid.z, a.Footprint))
+                        {
+                            enclosedCount++;
+                            if (enclosedCount >= 2)
+                            {
+                                suppressed[i] = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // RULE 3: Deduplicate overlapping/concentric footprints
+            // If two candidates share almost identical centroids and area, and overlap vertically:
+            HashSet<long> resolvedWayIds = new HashSet<long>();
+
+            for (int i = 0; i < activeCandidates.Count; i++)
+            {
+                if (suppressed[i]) continue;
+                var a = activeCandidates[i];
+
+                for (int j = i + 1; j < activeCandidates.Count; j++)
+                {
+                    if (suppressed[j]) continue;
+                    var b = activeCandidates[j];
+
+                    // Check horizontal proximity
+                    float dist = Vector3.Distance(a.Centroid, b.Centroid);
+                    if (dist > 2.0f) continue;
+
+                    // Check area similarity
+                    float maxArea = Mathf.Max(a.Area, b.Area);
+                    float areaDiff = Mathf.Abs(a.Area - b.Area) / maxArea;
+                    if (areaDiff > 0.35f) continue;
+
+                    // Check vertical overlap:
+                    // If one is stacked on top of the other (e.g. minHeight of B >= maxHeight of A - 1f),
+                    // they are separate vertical tiers/floors and should NOT be suppressed!
+                    bool verticallySeparated = (b.MinHeight >= a.MaxHeight - 1f) || (a.MinHeight >= b.MaxHeight - 1f);
+                    if (verticallySeparated) continue;
+
+                    // Duplicate detected! Decide which one to keep
+                    // Prefer building:part over outline, or prefer the one with explicit height tags
+                    if (b.IsPart && !a.IsPart)
+                    {
+                        suppressed[i] = true;
+                        break;
+                    }
+                    else
+                    {
+                        suppressed[j] = true;
+                    }
+                }
+
+                if (!suppressed[i])
+                {
+                    resolvedWayIds.Add(a.Way.Id);
+                }
+            }
+
+            return resolvedWayIds;
         }
 
         private bool IsInsideAnyBuilding(Vector3 pos, List<Bounds> buildingBounds)
@@ -1404,13 +1777,23 @@ namespace GeoCity3D.Editor
                 yield break;
             }
 
+            GrassBuilder.ResetMaterialPool();
+
             // 3. Materials
+            Texture2D facadeNormalMap = TextureGenerator.CreateFacadeNormalMap();
+            yield return null;
             Material buildingMat = _cityController.BuildingWallMaterial != null
                 ? _cityController.BuildingWallMaterial
-                : CreateSolidMaterial(shader, new Color(0.88f, 0.88f, 0.86f), 0.25f);
+                : CreateTexturedMaterial(shader, TextureGenerator.CreateFacadeTexture(512, 512, new Color(0.92f, 0.91f, 0.89f)), facadeNormalMap, 0.25f);
+            yield return null;
             Material roofMat = _cityController.BuildingRoofMaterial != null
                 ? _cityController.BuildingRoofMaterial
-                : CreateSolidMaterial(shader, new Color(0.35f, 0.35f, 0.38f), 0.15f);
+                : CreateTexturedMaterial(shader, TextureGenerator.CreateRoofTexture(256, 256, new Color(0.38f, 0.38f, 0.40f)), 0.15f);
+            yield return null;
+            Material windowMat = _cityController.BuildingWindowMaterial != null
+                ? _cityController.BuildingWindowMaterial
+                : CreateGlassMaterial(shader);
+            yield return null;
 
             Texture2D roadNormalMap = TextureGenerator.CreateAsphaltNormalMap();
             yield return null;
@@ -1447,6 +1830,9 @@ namespace GeoCity3D.Editor
             GameObject stonesParent = new GameObject("Stones");
             stonesParent.transform.SetParent(cityRoot.transform);
 
+            GameObject grassParent = new GameObject("Grass");
+            grassParent.transform.SetParent(cityRoot.transform);
+
             GameObject vehiclesParent = new GameObject("Vehicles");
             vehiclesParent.transform.SetParent(cityRoot.transform);
 
@@ -1460,6 +1846,7 @@ namespace GeoCity3D.Editor
             StreetFurnitureBuilder.ResetMaterialPool();
             TreeBuilder.ResetMaterialPool();
             RockBuilder.ResetMaterialPool();
+            GrassBuilder.ResetMaterialPool();
             _sharedCarMaterials = null;
             _proceduralRockMat = null;
             _sharedSignalPoleMat = null;
@@ -1469,6 +1856,7 @@ namespace GeoCity3D.Editor
             int waterCount = 0;
             int treeCount = 0;
             int stoneCount = 0;
+            int grassCount = 0;
             int vehicleCount = 0;
             int lightCount = 0;
             int signalCount = 0;
@@ -1501,6 +1889,7 @@ namespace GeoCity3D.Editor
             Vector3 lakeCenter = new Vector3(radius * 0.42f, 0f, radius * 0.42f);
             float lakeBaseRadius = radius * 0.20f;
             List<Vector3> lakePolygon = new List<Vector3>();
+            List<Vector3> lakeParkPoly = new List<Vector3>();
             if (_includeLake)
             {
                 int lakePoints = 20;
@@ -1521,7 +1910,6 @@ namespace GeoCity3D.Editor
                 }
 
                 // Park surrounding lake
-                List<Vector3> lakeParkPoly = new List<Vector3>();
                 for (int i = 0; i < lakePoints; i++)
                 {
                     float angle = (float)i / lakePoints * Mathf.PI * 2f;
@@ -1551,6 +1939,7 @@ namespace GeoCity3D.Editor
                 zRoads.Add(z);
 
             List<List<Vector3>> allRoadPaths = new List<List<Vector3>>();
+            HashSet<List<Vector3>> bridgeRoadPaths = new HashSet<List<Vector3>>();
 
             // North-South Roads & Bridges
             foreach (float rx in xRoads)
@@ -1559,7 +1948,8 @@ namespace GeoCity3D.Editor
                 {
                     float tRoad = (rx - (-radius * 1.05f)) / (2.1f * radius);
                     float riverZAtRx = Mathf.Sin(tRoad * Mathf.PI * 2.2f) * (radius * 0.28f) + (tRoad - 0.5f) * (radius * 0.15f);
-                    float bridgeHalfSpan = riverWidth * 0.5f + 8f;
+                    // 26m approach runway on solid land on each riverbank for a realistic, smooth ~14% grade climb
+                    float bridgeHalfSpan = riverWidth * 0.5f + 26f;
 
                     List<Vector3> southRoad = new List<Vector3>
                     {
@@ -1582,7 +1972,13 @@ namespace GeoCity3D.Editor
                     if (r1 != null) { r1.transform.SetParent(roadsParent.transform); roadCount++; allRoadPaths.Add(southRoad); }
 
                     GameObject br = BridgeBuilder.Build(bridgePath, 8f, primaryRoadMat, sidewalkMat, (long)(rx + 100000), "primary");
-                    if (br != null) { br.transform.SetParent(roadsParent.transform); roadCount++; allRoadPaths.Add(bridgePath); }
+                    if (br != null)
+                    {
+                        br.transform.SetParent(roadsParent.transform);
+                        roadCount++;
+                        allRoadPaths.Add(bridgePath);
+                        bridgeRoadPaths.Add(bridgePath);
+                    }
 
                     GameObject r2 = RoadBuilder.CreateSolidStrip(northRoad, 8f, 0.08f, 0.12f, primaryRoadMat, $"Road_N_{rx}");
                     if (r2 != null) { r2.transform.SetParent(roadsParent.transform); roadCount++; allRoadPaths.Add(northRoad); }
@@ -1687,7 +2083,7 @@ namespace GeoCity3D.Editor
                             // Identical 4-floor architectural building height
                             float bHeight = 12.8f;
                             GameObject bObj = BuildingBuilder.BuildFromFootprint(footprint, bHeight,
-                                buildingMat, roofMat, bId++, bCornerRadius);
+                                buildingMat, roofMat, bId++, bCornerRadius, windowMat);
 
                             if (bObj != null)
                             {
@@ -1712,6 +2108,7 @@ namespace GeoCity3D.Editor
             // Determine if CityController has prefabs assigned
             bool hasTreePrefabs = _cityController.TreePrefabs != null && _cityController.TreePrefabs.Length > 0;
             bool hasRockPrefabs = _cityController.RockPrefabs != null && _cityController.RockPrefabs.Length > 0;
+            bool hasGrassPrefabs = _cityController.GrassPrefabs != null && _cityController.GrassPrefabs.Length > 0;
             bool hasLightPrefabs = _cityController.StreetLightPrefabs != null && _cityController.StreetLightPrefabs.Length > 0;
             bool hasSignalPrefabs = _cityController.TrafficSignalPrefabs != null && _cityController.TrafficSignalPrefabs.Length > 0;
             bool hasVehiclePrefabs = _cityController.VehiclePrefabs != null && _cityController.VehiclePrefabs.Length > 0;
@@ -1767,9 +2164,11 @@ namespace GeoCity3D.Editor
                     }
                 }
 
-                // Avenue trees along roads
+                // Avenue trees along roads (skip bridges)
                 foreach (var rPath in allRoadPaths)
                 {
+                    if (bridgeRoadPaths.Contains(rPath)) continue;
+
                     for (int i = 0; i < rPath.Count - 1; i++)
                     {
                         float segLen = Vector3.Distance(rPath[i], rPath[i + 1]);
@@ -1794,6 +2193,80 @@ namespace GeoCity3D.Editor
                         }
                     }
                 }
+            }
+
+            // ── 9b. GRASS & GROUND COVER ──
+            if (_includeGrass)
+            {
+                // Lakeside park grass
+                if (_includeLake && lakeParkPoly != null && lakeParkPoly.Count >= 3)
+                {
+                    List<GameObject> lakeGrass = GrassBuilder.ScatterInPolygon(
+                        lakeParkPoly, 80,
+                        hasGrassPrefabs ? _cityController.GrassPrefabs : null,
+                        shader, 0.02f);
+                    foreach (var g in lakeGrass)
+                    {
+                        if (WaterBuilder.IsPointInWater(g.transform.position, procWaterAreas, procWaterways, 0.4f) ||
+                            IsInsideAnyBuilding(g.transform.position, buildingBounds))
+                        {
+                            Object.DestroyImmediate(g);
+                        }
+                        else
+                        {
+                            g.transform.SetParent(grassParent.transform);
+                            grassCount++;
+                        }
+                    }
+                }
+
+                // Riverbank grass tufts
+                if (_includeRiver && riverPath != null && riverPath.Count >= 2)
+                {
+                    for (int i = 0; i < riverPath.Count; i++)
+                    {
+                        Vector3 fwd = (i < riverPath.Count - 1) ? (riverPath[i + 1] - riverPath[i]).normalized : Vector3.right;
+                        Vector3 rgt = Vector3.Cross(Vector3.up, fwd).normalized;
+                        for (int side = -1; side <= 1; side += 2)
+                        {
+                            if (Random.value < 0.45f) continue;
+                            float dist = riverWidth * 0.5f + Random.Range(1.2f, 4.0f);
+                            Vector3 gPos = riverPath[i] + rgt * (side * dist) + fwd * Random.Range(-2f, 2f);
+                            gPos.y = 0.02f;
+                            if (!WaterBuilder.IsPointInWater(gPos, procWaterAreas, procWaterways, 0.4f) &&
+                                !IsInsideAnyBuilding(gPos, buildingBounds))
+                            {
+                                GameObject g = hasGrassPrefabs
+                                    ? GrassBuilder.BuildPrefab(gPos, _cityController.GrassPrefabs, Random.Range(0.8f, 1.3f))
+                                    : GrassBuilder.BuildProceduralTuft(gPos, shader, Random.Range(0.8f, 1.3f));
+                                if (g != null)
+                                {
+                                    g.transform.SetParent(grassParent.transform);
+                                    grassCount++;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Open green terrain 3D grass scattering
+                List<Bounds> procRoadBounds = new List<Bounds>();
+                Renderer[] rRenderers = roadsParent.GetComponentsInChildren<Renderer>();
+                foreach (var rr in rRenderers) procRoadBounds.Add(rr.bounds);
+
+                bool useGrassPrefabs = hasGrassPrefabs && _natureMode == NatureMode.Prefab;
+                int procGroundGrass = GrassBuilder.ScatterGroundGreenery(
+                    grassParent.transform,
+                    radius,
+                    buildingBounds,
+                    procRoadBounds,
+                    procWaterAreas,
+                    procWaterways,
+                    null,
+                    useGrassPrefabs ? _cityController.GrassPrefabs : null,
+                    shader,
+                    7.5f);
+                grassCount += procGroundGrass;
             }
 
             // ── 10. STONES & ROCKS ──
@@ -1952,9 +2425,18 @@ namespace GeoCity3D.Editor
             // ── 13. MESH COMBINING & BATCHING ──
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(roadsParent);
             GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(waterParent);
+            if (waterCount > 0)
+            {
+                WaterAnimator wAnim = waterParent.GetComponent<WaterAnimator>();
+                if (wAnim == null) wAnim = waterParent.AddComponent<WaterAnimator>();
+                wAnim.TargetMaterial = waterMat;
+                wAnim.IsRiver = true;
+                wAnim.FlowSpeed = 0.12f;
+            }
             if (parksParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(parksParent);
             if (treesParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(treesParent);
             if (stonesParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(stonesParent);
+            if (grassParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(grassParent);
             if (vehiclesParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(vehiclesParent);
             if (lightsParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(lightsParent);
             if (signalsParent.transform.childCount > 0) GeoCity3D.Visuals.CityCombiner.CombineMeshesByMaterial(signalsParent);
@@ -1965,11 +2447,12 @@ namespace GeoCity3D.Editor
             SetStaticFlags(parksParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(treesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(stonesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
+            SetStaticFlags(grassParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(vehiclesParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(lightsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
             SetStaticFlags(signalsParent, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
 
-            Debug.Log($"Procedural Map Complete! Buildings: {buildingCount}, Roads: {roadCount}, Water Bodies: {waterCount}, Trees: {treeCount}, Stones: {stoneCount}, Vehicles: {vehicleCount}, Lights: {lightCount}, Signals: {signalCount}");
+            Debug.Log($"Procedural Map Complete! Buildings: {buildingCount}, Roads: {roadCount}, Water Bodies: {waterCount}, Trees: {treeCount}, Stones: {stoneCount}, Grass: {grassCount}, Vehicles: {vehicleCount}, Lights: {lightCount}, Signals: {signalCount}");
             _isGenerating = false;
         }
 

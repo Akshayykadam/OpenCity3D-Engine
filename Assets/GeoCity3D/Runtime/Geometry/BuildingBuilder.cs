@@ -19,7 +19,7 @@ namespace GeoCity3D.Geometry
             Material wallMat, Material roofMat,
             Vector2 wallUVOffset, Vector2 wallUVScale,
             Vector2 roofUVOffset, Vector2 roofUVScale,
-            OriginShifter originShifter)
+            OriginShifter originShifter, Material windowMat = null)
         {
             List<Vector3> footprint = ExtractFootprint(way, data, originShifter);
             if (footprint == null) return null;
@@ -38,30 +38,34 @@ namespace GeoCity3D.Geometry
             if (PolygonArea(footprint) < 0)
                 footprint.Reverse();
 
-            float height = DetermineHeight(way, area);
+            float minHeight = DetermineMinHeight(way);
+            float totalHeight = DetermineHeight(way, area);
+            float topY = Mathf.Max(minHeight + 3f, totalHeight);
+            float wallHeight = topY - minHeight;
+
             // Identical structural profile: modern flat roof with uniform parapet & cornice
             bool isPitchedRoof = false;
             bool hasSetback = false;
 
-            return CreateSolidBuilding(footprint, height, wallMat, roofMat,
+            return CreateSolidBuilding(footprint, wallHeight, wallMat, roofMat,
                 wallUVOffset, wallUVScale, roofUVOffset, roofUVScale,
-                way.Id, isPitchedRoof, hasSetback);
+                way.Id, isPitchedRoof, hasSetback, minHeight, windowMat);
         }
 
         public static GameObject Build(OsmWay way, OsmData data,
-            Material wallMat, Material roofMat, OriginShifter originShifter)
+            Material wallMat, Material roofMat, OriginShifter originShifter, Material windowMat = null)
         {
             return Build(way, data, wallMat, roofMat,
                 Vector2.zero, Vector2.one,
                 Vector2.zero, Vector2.one,
-                originShifter);
+                originShifter, windowMat);
         }
 
         /// <summary>
         /// Directly build a procedural building from an arbitrary 2D/3D polygon footprint with rounded corners.
         /// </summary>
         public static GameObject BuildFromFootprint(List<Vector3> rawFootprint, float height,
-            Material wallMat, Material roofMat, long id, float cornerRadius = 1.8f)
+            Material wallMat, Material roofMat, long id, float cornerRadius = 1.8f, Material windowMat = null)
         {
             if (rawFootprint == null || rawFootprint.Count < 3) return null;
 
@@ -78,22 +82,52 @@ namespace GeoCity3D.Geometry
 
             return CreateSolidBuilding(footprint, height, wallMat, roofMat,
                 Vector2.zero, Vector2.one, Vector2.zero, Vector2.one,
-                id, false, false);
+                id, false, false, 0f, windowMat);
         }
 
         // ══════════════════════════════════════════════════════════════
         //  SOLID BUILDING — sealed extrusion, no hollow interior
         // ══════════════════════════════════════════════════════════════
 
+        private static Material _defaultGlassMat;
+        private static Material GetDefaultGlassMaterial(Shader fallbackShader)
+        {
+            if (_defaultGlassMat != null) return _defaultGlassMat;
+            Shader shader = fallbackShader;
+            if (shader == null) shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) shader = Shader.Find("Diffuse");
+            if (shader == null) return null;
+
+            _defaultGlassMat = new Material(shader);
+            _defaultGlassMat.name = "BuildingGlass_Default";
+            Color glassColor = new Color(0.12f, 0.20f, 0.32f, 1.0f);
+            _defaultGlassMat.color = glassColor;
+            if (_defaultGlassMat.HasProperty("_BaseColor")) _defaultGlassMat.SetColor("_BaseColor", glassColor);
+            if (_defaultGlassMat.HasProperty("_Color")) _defaultGlassMat.SetColor("_Color", glassColor);
+            if (_defaultGlassMat.HasProperty("_Smoothness")) _defaultGlassMat.SetFloat("_Smoothness", 0.92f);
+            if (_defaultGlassMat.HasProperty("_Glossiness")) _defaultGlassMat.SetFloat("_Glossiness", 0.92f);
+            if (_defaultGlassMat.HasProperty("_Metallic")) _defaultGlassMat.SetFloat("_Metallic", 0.50f);
+            if (_defaultGlassMat.HasProperty("_Cull")) _defaultGlassMat.SetFloat("_Cull", 0f);
+            _defaultGlassMat.renderQueue = 2000;
+            _defaultGlassMat.enableInstancing = true;
+            return _defaultGlassMat;
+        }
+
         private static GameObject CreateSolidBuilding(List<Vector3> footprint, float height,
             Material wallMat, Material roofMat,
             Vector2 wOff, Vector2 wScl, Vector2 rOff, Vector2 rScl,
-            long id, bool pitchedRoof, bool hasSetback)
+            long id, bool pitchedRoof, bool hasSetback, float baseY = 0f, Material windowMat = null)
         {
+            if (windowMat == null)
+                windowMat = GetDefaultGlassMaterial(wallMat != null ? wallMat.shader : null);
+
             GameObject go = new GameObject($"Building_{id}");
             MeshFilter mf = go.AddComponent<MeshFilter>();
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterials = new Material[] { wallMat, roofMat };
+            mr.sharedMaterials = windowMat != null 
+                ? new Material[] { wallMat, roofMat, windowMat } 
+                : new Material[] { wallMat, roofMat };
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
             mr.receiveShadows = true;
 
@@ -101,8 +135,10 @@ namespace GeoCity3D.Geometry
             mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32; // Allow large skyscraper meshes (>65k vertices)
             List<Vector3> verts = new List<Vector3>();
             List<Vector2> uvs = new List<Vector2>();
+            List<Color> colors = new List<Color>();
             List<int> wallTris = new List<int>();
             List<int> roofTris = new List<int>();
+            List<int> glassTris = new List<int>();
 
             float mainHeight = height;
             float setbackHeight = 0f;
@@ -116,17 +152,20 @@ namespace GeoCity3D.Geometry
             }
 
             // ── OUTER WALLS of lower section ──
-            AddSolidWalls(footprint, 0f, mainHeight, wOff, wScl, verts, uvs, wallTris);
+            AddSolidWalls(footprint, baseY, mainHeight, wOff, wScl, verts, uvs, colors, wallTris);
 
             // ── Architectural detail on lower section ──
-            AddBasePlinth(footprint, 0f, verts, uvs, wallTris);
-            AddFloorLedges(footprint, 0f, mainHeight, verts, uvs, wallTris);
-            AddWindowRecesses(footprint, 0f, mainHeight, verts, uvs, wallTris);
+            if (baseY < 0.1f)
+            {
+                AddBasePlinth(footprint, baseY, verts, uvs, colors, wallTris);
+            }
+            AddFloorLedges(footprint, baseY, mainHeight, verts, uvs, colors, wallTris);
+            AddWindowFeatures(footprint, baseY, mainHeight, verts, uvs, colors, wallTris, glassTris);
 
-            // ── BOTTOM CAP (face down — seals the base, sits flush on ground) ──
+            // ── BOTTOM CAP (face down — seals the base) ──
             float minX, maxX, minZ, maxZ;
             ComputeBounds(footprint, out minX, out maxX, out minZ, out maxZ);
-            AddSolidCap(footprint, 0f, minX, maxX, minZ, maxZ, verts, uvs, wallTris, true);
+            AddSolidCap(footprint, baseY, minX, maxX, minZ, maxZ, verts, uvs, colors, wallTris, true);
 
             if (hasSetback && upperFootprint != null && upperFootprint.Count >= 3)
             {
@@ -135,59 +174,70 @@ namespace GeoCity3D.Geometry
                     upperFootprint.Reverse();
 
                 // ── Terrace cap at main height (face up) ──
-                AddSolidCap(footprint, mainHeight, minX, maxX, minZ, maxZ, verts, uvs, roofTris, false);
+                AddSolidCap(footprint, baseY + mainHeight, minX, maxX, minZ, maxZ, verts, uvs, colors, roofTris, false);
 
                 // ── Upper section walls + detail ──
-                AddSolidWalls(upperFootprint, mainHeight, setbackHeight, wOff, wScl, verts, uvs, wallTris);
-                AddFloorLedges(upperFootprint, mainHeight, setbackHeight, verts, uvs, wallTris);
-                AddWindowRecesses(upperFootprint, mainHeight, setbackHeight, verts, uvs, wallTris);
+                AddSolidWalls(upperFootprint, baseY + mainHeight, setbackHeight, wOff, wScl, verts, uvs, colors, wallTris);
+                AddFloorLedges(upperFootprint, baseY + mainHeight, setbackHeight, verts, uvs, colors, wallTris);
+                AddWindowFeatures(upperFootprint, baseY + mainHeight, setbackHeight, verts, uvs, colors, wallTris, glassTris);
 
                 // ── Upper roof ──
                 float uMinX, uMaxX, uMinZ, uMaxZ;
                 ComputeBounds(upperFootprint, out uMinX, out uMaxX, out uMinZ, out uMaxZ);
-                float topY = mainHeight + setbackHeight;
+                float topY = baseY + mainHeight + setbackHeight;
 
                 // Cornice at the top
-                AddCornice(upperFootprint, topY, verts, uvs, wallTris);
+                AddCornice(upperFootprint, topY, verts, uvs, colors, wallTris);
 
                 if (pitchedRoof)
                 {
-                    AddPitchedRoof(upperFootprint, topY, rOff, rScl, uMinX, uMaxX, uMinZ, uMaxZ, verts, uvs, roofTris);
+                    AddPitchedRoof(upperFootprint, topY, rOff, rScl, uMinX, uMaxX, uMinZ, uMaxZ, verts, uvs, colors, roofTris);
                 }
                 else
                 {
                     // Solid flat roof cap (face up) + parapet
-                    AddSolidCap(upperFootprint, topY, uMinX, uMaxX, uMinZ, uMaxZ, verts, uvs, roofTris, false);
+                    AddSolidCap(upperFootprint, topY, uMinX, uMaxX, uMinZ, uMaxZ, verts, uvs, colors, roofTris, false);
                     if (setbackHeight > 3f)
-                        AddSolidParapet(upperFootprint, topY, 0.5f, wOff, wScl, verts, uvs, wallTris, roofTris);
+                        AddSolidParapet(upperFootprint, topY, 0.5f, wOff, wScl, verts, uvs, colors, wallTris, roofTris);
                 }
             }
             else
             {
                 // ── Single volume — top cap + optional parapet ──
-                // Cornice at the roof line
+                float topY = baseY + mainHeight;
                 if (!pitchedRoof && mainHeight > 4f)
-                    AddCornice(footprint, mainHeight, verts, uvs, wallTris);
+                    AddCornice(footprint, topY, verts, uvs, colors, wallTris);
 
                 if (pitchedRoof)
                 {
-                    AddPitchedRoof(footprint, mainHeight, rOff, rScl, minX, maxX, minZ, maxZ, verts, uvs, roofTris);
+                    AddPitchedRoof(footprint, topY, rOff, rScl, minX, maxX, minZ, maxZ, verts, uvs, colors, roofTris);
                 }
                 else
                 {
                     // Solid flat roof (seals the top of the extrusion)
-                    AddSolidCap(footprint, mainHeight, minX, maxX, minZ, maxZ, verts, uvs, roofTris, false);
+                    AddSolidCap(footprint, topY, minX, maxX, minZ, maxZ, verts, uvs, colors, roofTris, false);
                     if (height > 5f)
-                        AddSolidParapet(footprint, mainHeight, 0.5f, wOff, wScl, verts, uvs, wallTris, roofTris);
+                        AddSolidParapet(footprint, topY, 0.5f, wOff, wScl, verts, uvs, colors, wallTris, roofTris);
                 }
             }
 
             // ── Assemble mesh ──
             mesh.vertices = verts.ToArray();
             mesh.uv = uvs.ToArray();
-            mesh.subMeshCount = 2;
-            mesh.SetTriangles(wallTris, 0);
-            mesh.SetTriangles(roofTris, 1);
+            mesh.colors = colors.ToArray();
+            if (windowMat != null && glassTris.Count > 0)
+            {
+                mesh.subMeshCount = 3;
+                mesh.SetTriangles(wallTris, 0);
+                mesh.SetTriangles(roofTris, 1);
+                mesh.SetTriangles(glassTris, 2);
+            }
+            else
+            {
+                mesh.subMeshCount = 2;
+                mesh.SetTriangles(wallTris, 0);
+                mesh.SetTriangles(roofTris, 1);
+            }
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
 
@@ -207,7 +257,7 @@ namespace GeoCity3D.Geometry
 
         private static void AddSolidWalls(List<Vector3> footprint, float baseY, float wallHeight,
             Vector2 wOff, Vector2 wScl,
-            List<Vector3> verts, List<Vector2> uvs, List<int> tris)
+            List<Vector3> verts, List<Vector2> uvs, List<Color> colors, List<int> tris)
         {
             float cumDist = 0f;
 
@@ -229,7 +279,12 @@ namespace GeoCity3D.Geometry
                 verts.Add(new Vector3(p2.x, topY, p2.z));    // top-right
                 verts.Add(new Vector3(p1.x, topY, p1.z));    // top-left
 
-                // UV mapping
+                colors.Add(Color.white);
+                colors.Add(Color.white);
+                colors.Add(Color.white);
+                colors.Add(Color.white);
+
+                // UV mapping — tiles 4m wide by 3.2m tall (matches 1 story facade panel)
                 float u1 = cumDist / 4f;
                 float u2 = (cumDist + segLen) / 4f;
                 float v1 = baseY / 3.2f;
@@ -253,7 +308,7 @@ namespace GeoCity3D.Geometry
 
         private static void AddSolidCap(List<Vector3> footprint, float capY,
             float minX, float maxX, float minZ, float maxZ,
-            List<Vector3> verts, List<Vector2> uvs, List<int> tris, bool faceDown)
+            List<Vector3> verts, List<Vector2> uvs, List<Color> colors, List<int> tris, bool faceDown)
         {
             if (footprint == null || footprint.Count < 3) return;
 
@@ -261,12 +316,15 @@ namespace GeoCity3D.Geometry
             float sizeZ = Mathf.Max(maxZ - minZ, 0.01f);
 
             int baseIdx = verts.Count;
+            Color capColor = faceDown ? Color.white : new Color(0.88f, 0.88f, 0.88f);
+
             for (int i = 0; i < footprint.Count; i++)
             {
                 verts.Add(new Vector3(footprint[i].x, capY, footprint[i].z));
                 uvs.Add(new Vector2(
                     (footprint[i].x - minX) / sizeX,
                     (footprint[i].z - minZ) / sizeZ));
+                colors.Add(capColor);
             }
 
             // Triangulate using XZ projection
@@ -314,6 +372,7 @@ namespace GeoCity3D.Geometry
                 int centerIdx = verts.Count;
                 verts.Add(center);
                 uvs.Add(new Vector2(0.5f, 0.5f));
+                colors.Add(capColor);
 
                 for (int i = 0; i < footprint.Count; i++)
                 {
@@ -342,7 +401,7 @@ namespace GeoCity3D.Geometry
 
         private static void AddSolidParapet(List<Vector3> footprint, float roofY, float parapetH,
             Vector2 wOff, Vector2 wScl,
-            List<Vector3> verts, List<Vector2> uvs, List<int> wallTris, List<int> roofTris)
+            List<Vector3> verts, List<Vector2> uvs, List<Color> colors, List<int> wallTris, List<int> roofTris)
         {
             List<Vector3> inner = ShrinkPolygon(footprint, 0.2f);
             if (inner == null || inner.Count < 3) return;
@@ -352,9 +411,10 @@ namespace GeoCity3D.Geometry
                 inner.Reverse();
 
             float topY = roofY + parapetH;
+            Color parapetColor = new Color(0.80f, 0.80f, 0.82f);
 
             // Outer walls of parapet (face outward)
-            AddSolidWalls(footprint, roofY, parapetH, wOff, wScl, verts, uvs, wallTris);
+            AddSolidWalls(footprint, roofY, parapetH, wOff, wScl, verts, uvs, colors, wallTris);
 
             // Inner walls of parapet (face inward — reverse winding)
             for (int i = 0; i < inner.Count; i++)
@@ -372,6 +432,11 @@ namespace GeoCity3D.Geometry
                 uvs.Add(new Vector2(1, 0));
                 uvs.Add(new Vector2(1, 1));
                 uvs.Add(new Vector2(0, 1));
+
+                colors.Add(parapetColor);
+                colors.Add(parapetColor);
+                colors.Add(parapetColor);
+                colors.Add(parapetColor);
 
                 // Reverse winding — faces inward
                 wallTris.Add(bi + 0); wallTris.Add(bi + 1); wallTris.Add(bi + 2);
@@ -395,6 +460,11 @@ namespace GeoCity3D.Geometry
                 uvs.Add(new Vector2(1, 1));
                 uvs.Add(new Vector2(0, 1));
 
+                colors.Add(parapetColor);
+                colors.Add(parapetColor);
+                colors.Add(parapetColor);
+                colors.Add(parapetColor);
+
                 // Face up
                 wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
                 wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
@@ -405,7 +475,7 @@ namespace GeoCity3D.Geometry
 
         private static void AddPitchedRoof(List<Vector3> footprint, float roofBaseY,
             Vector2 rOff, Vector2 rScl, float minX, float maxX, float minZ, float maxZ,
-            List<Vector3> verts, List<Vector2> uvs, List<int> tris)
+            List<Vector3> verts, List<Vector2> uvs, List<Color> colors, List<int> tris)
         {
             float sizeX = Mathf.Max(maxX - minX, 0.01f);
             float sizeZ = Mathf.Max(maxZ - minZ, 0.01f);
@@ -420,6 +490,7 @@ namespace GeoCity3D.Geometry
             int peakIdx = verts.Count;
             verts.Add(peak);
             uvs.Add(new Vector2(0.5f, 0.5f));
+            colors.Add(Color.white);
 
             int baseIdx = verts.Count;
             for (int i = 0; i < footprint.Count; i++)
@@ -429,6 +500,7 @@ namespace GeoCity3D.Geometry
                 uvs.Add(new Vector2(
                     (footprint[i].x - minX) / sizeX,
                     (footprint[i].z - minZ) / sizeZ));
+                colors.Add(Color.white);
             }
 
             for (int i = 0; i < footprint.Count; i++)
@@ -446,7 +518,7 @@ namespace GeoCity3D.Geometry
         // ══════════════════════════════════════════════════════════════
 
         private static void AddFloorLedges(List<Vector3> footprint, float baseY, float totalHeight,
-            List<Vector3> verts, List<Vector2> uvs, List<int> wallTris)
+            List<Vector3> verts, List<Vector2> uvs, List<Color> colors, List<int> wallTris)
         {
             float floorHeight = 3.2f;
             float ledgeDepth = 0.12f;  // How far the ledge sticks out
@@ -456,6 +528,7 @@ namespace GeoCity3D.Geometry
             if (floors < 2) return; // No ledges for single-floor
 
             Vector3[] miters = ComputeOutwardVertexMiters(footprint, ledgeDepth);
+            Color ledgeColor = new Color(0.82f, 0.84f, 0.86f);
 
             for (int floor = 1; floor < floors; floor++)
             {
@@ -489,6 +562,7 @@ namespace GeoCity3D.Geometry
                     verts.Add(ob1); verts.Add(ob2); verts.Add(ot2); verts.Add(ot1);
                     uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
                     uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                    colors.Add(ledgeColor); colors.Add(ledgeColor); colors.Add(ledgeColor); colors.Add(ledgeColor);
                     wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
                     wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
 
@@ -497,6 +571,7 @@ namespace GeoCity3D.Geometry
                     verts.Add(it1); verts.Add(it2); verts.Add(ot2); verts.Add(ot1);
                     uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
                     uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                    colors.Add(ledgeColor * 1.1f); colors.Add(ledgeColor * 1.1f); colors.Add(ledgeColor * 1.1f); colors.Add(ledgeColor * 1.1f);
                     wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
                     wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
 
@@ -505,6 +580,7 @@ namespace GeoCity3D.Geometry
                     verts.Add(ib1); verts.Add(ib2); verts.Add(ob2); verts.Add(ob1);
                     uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
                     uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                    colors.Add(ledgeColor * 0.75f); colors.Add(ledgeColor * 0.75f); colors.Add(ledgeColor * 0.75f); colors.Add(ledgeColor * 0.75f);
                     wallTris.Add(bi); wallTris.Add(bi + 1); wallTris.Add(bi + 2);
                     wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 3);
                 }
@@ -517,12 +593,13 @@ namespace GeoCity3D.Geometry
         // ══════════════════════════════════════════════════════════════
 
         private static void AddBasePlinth(List<Vector3> footprint, float baseY,
-            List<Vector3> verts, List<Vector2> uvs, List<int> wallTris)
+            List<Vector3> verts, List<Vector2> uvs, List<Color> colors, List<int> wallTris)
         {
             float plinthHeight = 0.8f;
             float plinthDepth = 0.1f;
 
             Vector3[] miters = ComputeOutwardVertexMiters(footprint, plinthDepth);
+            Color plinthColor = new Color(0.62f, 0.64f, 0.66f);
 
             for (int i = 0; i < footprint.Count; i++)
             {
@@ -543,6 +620,7 @@ namespace GeoCity3D.Geometry
                 verts.Add(ob1); verts.Add(ob2); verts.Add(ot2); verts.Add(ot1);
                 uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
                 uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                colors.Add(plinthColor); colors.Add(plinthColor); colors.Add(plinthColor); colors.Add(plinthColor);
                 wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
                 wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
 
@@ -553,6 +631,7 @@ namespace GeoCity3D.Geometry
                 verts.Add(it1); verts.Add(it2); verts.Add(ot2); verts.Add(ot1);
                 uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
                 uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                colors.Add(plinthColor * 1.1f); colors.Add(plinthColor * 1.1f); colors.Add(plinthColor * 1.1f); colors.Add(plinthColor * 1.1f);
                 wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
                 wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
             }
@@ -564,13 +643,14 @@ namespace GeoCity3D.Geometry
         // ══════════════════════════════════════════════════════════════
 
         private static void AddCornice(List<Vector3> footprint, float roofY,
-            List<Vector3> verts, List<Vector2> uvs, List<int> wallTris)
+            List<Vector3> verts, List<Vector2> uvs, List<Color> colors, List<int> wallTris)
         {
             float corniceDepth = 0.2f;
             float corniceHeight = 0.3f;
             float corniceBot = roofY - corniceHeight;
 
             Vector3[] miters = ComputeOutwardVertexMiters(footprint, corniceDepth);
+            Color corniceColor = new Color(0.85f, 0.86f, 0.88f);
 
             for (int i = 0; i < footprint.Count; i++)
             {
@@ -592,6 +672,7 @@ namespace GeoCity3D.Geometry
                 verts.Add(ob1); verts.Add(ob2); verts.Add(ot2); verts.Add(ot1);
                 uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
                 uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                colors.Add(corniceColor); colors.Add(corniceColor); colors.Add(corniceColor); colors.Add(corniceColor);
                 wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
                 wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
 
@@ -602,45 +683,46 @@ namespace GeoCity3D.Geometry
                 verts.Add(ib1); verts.Add(ib2); verts.Add(ob2); verts.Add(ob1);
                 uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
                 uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                colors.Add(corniceColor * 0.75f); colors.Add(corniceColor * 0.75f); colors.Add(corniceColor * 0.75f); colors.Add(corniceColor * 0.75f);
                 wallTris.Add(bi); wallTris.Add(bi + 1); wallTris.Add(bi + 2);
                 wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 3);
             }
         }
 
         // ══════════════════════════════════════════════════════════════
-        //  WINDOW RECESSES — indented rectangles on each wall face
-        //  Creates realistic shadow-casting window openings
+        //  WINDOW FEATURES — 3D frames, stone sills, mullions & reflective glass
+        //  Creates crisp architectural definition in normal Shaded mode
         // ══════════════════════════════════════════════════════════════
 
-        private static void AddWindowRecesses(List<Vector3> footprint, float baseY, float totalHeight,
-            List<Vector3> verts, List<Vector2> uvs, List<int> wallTris)
+        private static void AddWindowFeatures(List<Vector3> footprint, float baseY, float totalHeight,
+            List<Vector3> verts, List<Vector2> uvs, List<Color> colors, List<int> wallTris, List<int> glassTris)
         {
             float floorHeight = 3.2f;
-            float recessDepth = 0.08f;    // How deep windows are indented
-            float windowWidth = 1.2f;     // Window width in meters
+            float windowWidth = 1.3f;     // Window width
             float windowHeight = 1.6f;    // Window height
-            float windowBottom = 0.9f;    // Sill height from floor
-            float windowSpacing = 2.8f;   // Center-to-center distance between windows
+            float windowBottom = 0.85f;   // Sill height above floor
+            float windowSpacing = 2.6f;   // Center-to-center distance
 
             int floors = Mathf.FloorToInt(totalHeight / floorHeight);
             if (floors < 1) return;
+
+            Color frameColor = new Color(0.18f, 0.20f, 0.23f); // Dark charcoal architectural frame / mullions
+            Color sillColor = new Color(0.72f, 0.74f, 0.76f);  // Stone sill trim
+            Color glassColor = new Color(0.25f, 0.38f, 0.52f); // Reflective blue glass
 
             for (int i = 0; i < footprint.Count; i++)
             {
                 Vector3 p1 = footprint[i];
                 Vector3 p2 = footprint[(i + 1) % footprint.Count];
 
-                float wallLen = Vector3.Distance(
-                    new Vector3(p1.x, 0, p1.z),
-                    new Vector3(p2.x, 0, p2.z));
-
+                float wallLen = Vector3.Distance(new Vector3(p1.x, 0, p1.z), new Vector3(p2.x, 0, p2.z));
                 if (wallLen < windowSpacing) continue; // Wall too short for windows
 
                 Vector3 wallDir = (p2 - p1).normalized;
-                Vector3 inward = new Vector3(-wallDir.z, 0, wallDir.x) * recessDepth;
+                // Outward normal in 2D (counter-clockwise footprint)
+                Vector3 outward = new Vector3(wallDir.z, 0, -wallDir.x);
 
-                // How many windows fit on this wall
-                int winCount = Mathf.FloorToInt((wallLen - 1.0f) / windowSpacing);
+                int winCount = Mathf.FloorToInt((wallLen - 0.8f) / windowSpacing);
                 if (winCount < 1) continue;
 
                 float startOffset = (wallLen - winCount * windowSpacing) * 0.5f + windowSpacing * 0.5f;
@@ -652,71 +734,138 @@ namespace GeoCity3D.Geometry
                     for (int w = 0; w < winCount; w++)
                     {
                         float centerDist = startOffset + w * windowSpacing;
-
-                        // Window center on the wall
                         Vector3 wCenter = p1 + wallDir * centerDist;
 
-                        // Window rectangle corners (indented into the wall)
                         float halfW = windowWidth * 0.5f;
                         float winBot = floorBase + windowBottom;
                         float winTop = winBot + windowHeight;
 
-                        Vector3 bl = wCenter - wallDir * halfW + inward;
-                        bl.y = winBot;
-                        Vector3 br = wCenter + wallDir * halfW + inward;
-                        br.y = winBot;
-                        Vector3 tr = wCenter + wallDir * halfW + inward;
-                        tr.y = winTop;
-                        Vector3 tl = wCenter - wallDir * halfW + inward;
-                        tl.y = winTop;
+                        // ── 1. REFLECTIVE GLASS PANE (Submesh 2) ──
+                        // Slightly in front of wall quad to prevent Z-fighting and wall occlusion
+                        Vector3 gOffset = outward * 0.015f;
+                        Vector3 gbl = wCenter - wallDir * halfW + gOffset; gbl.y = winBot;
+                        Vector3 gbr = wCenter + wallDir * halfW + gOffset; gbr.y = winBot;
+                        Vector3 gtr = wCenter + wallDir * halfW + gOffset; gtr.y = winTop;
+                        Vector3 gtl = wCenter - wallDir * halfW + gOffset; gtl.y = winTop;
 
-                        // Recessed face (the window "glass" — darker because it's indented)
-                        int bi = verts.Count;
-                        verts.Add(bl); verts.Add(br); verts.Add(tr); verts.Add(tl);
+                        int gi = verts.Count;
+                        verts.Add(gbl); verts.Add(gbr); verts.Add(gtr); verts.Add(gtl);
                         uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
                         uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
-                        wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
-                        wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+                        colors.Add(glassColor); colors.Add(glassColor); colors.Add(glassColor); colors.Add(glassColor);
+                        glassTris.Add(gi); glassTris.Add(gi + 2); glassTris.Add(gi + 1);
+                        glassTris.Add(gi); glassTris.Add(gi + 3); glassTris.Add(gi + 2);
 
-                        // Sill (top of bottom reveal — horizontal face)
-                        Vector3 sbl = wCenter - wallDir * halfW; sbl.y = winBot;
-                        Vector3 sbr = wCenter + wallDir * halfW; sbr.y = winBot;
-                        bi = verts.Count;
-                        verts.Add(sbl); verts.Add(sbr); verts.Add(br); verts.Add(bl);
+                        // ── 2. PROTRUDING WINDOW SILL (Submesh 0) ──
+                        // Thick stone shelf at bottom of window that catches light and casts shadows
+                        float sillExt = 0.07f; // Sticking out 7cm
+                        float sillH = 0.08f;   // 8cm thick
+                        float sillW = halfW + 0.08f;
+                        Vector3 sOffset = outward * sillExt;
+                        float sTop = winBot;
+                        float sBot = winBot - sillH;
+
+                        Vector3 s_obl = wCenter - wallDir * sillW + sOffset; s_obl.y = sBot;
+                        Vector3 s_obr = wCenter + wallDir * sillW + sOffset; s_obr.y = sBot;
+                        Vector3 s_otr = wCenter + wallDir * sillW + sOffset; s_otr.y = sTop;
+                        Vector3 s_otl = wCenter - wallDir * sillW + sOffset; s_otl.y = sTop;
+
+                        Vector3 s_ibl = wCenter - wallDir * sillW; s_ibl.y = sBot;
+                        Vector3 s_ibr = wCenter + wallDir * sillW; s_ibr.y = sBot;
+                        Vector3 s_itr = wCenter + wallDir * sillW; s_itr.y = sTop;
+                        Vector3 s_itl = wCenter - wallDir * sillW; s_itl.y = sTop;
+
+                        // Sill front face
+                        int si = verts.Count;
+                        verts.Add(s_obl); verts.Add(s_obr); verts.Add(s_otr); verts.Add(s_otl);
                         uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
-                        uvs.Add(new Vector2(1, 0.3f)); uvs.Add(new Vector2(0, 0.3f));
-                        wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
-                        wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+                        uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                        colors.Add(sillColor); colors.Add(sillColor); colors.Add(sillColor); colors.Add(sillColor);
+                        wallTris.Add(si); wallTris.Add(si + 2); wallTris.Add(si + 1);
+                        wallTris.Add(si); wallTris.Add(si + 3); wallTris.Add(si + 2);
 
-                        // Lintel (bottom of top reveal — face down)
-                        Vector3 ltl = wCenter - wallDir * halfW; ltl.y = winTop;
-                        Vector3 ltr = wCenter + wallDir * halfW; ltr.y = winTop;
-                        bi = verts.Count;
-                        verts.Add(ltl); verts.Add(ltr); verts.Add(tr); verts.Add(tl);
+                        // Sill top face (catches light)
+                        si = verts.Count;
+                        verts.Add(s_itl); verts.Add(s_itr); verts.Add(s_otr); verts.Add(s_otl);
                         uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
-                        uvs.Add(new Vector2(1, 0.3f)); uvs.Add(new Vector2(0, 0.3f));
-                        wallTris.Add(bi); wallTris.Add(bi + 1); wallTris.Add(bi + 2);
-                        wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 3);
+                        uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                        colors.Add(sillColor * 1.15f); colors.Add(sillColor * 1.15f); colors.Add(sillColor * 1.15f); colors.Add(sillColor * 1.15f);
+                        wallTris.Add(si); wallTris.Add(si + 2); wallTris.Add(si + 1);
+                        wallTris.Add(si); wallTris.Add(si + 3); wallTris.Add(si + 2);
 
-                        // Left jamb (side reveal)
-                        Vector3 jbl = wCenter - wallDir * halfW; jbl.y = winBot;
-                        Vector3 jtl2 = wCenter - wallDir * halfW; jtl2.y = winTop;
-                        bi = verts.Count;
-                        verts.Add(jbl); verts.Add(bl); verts.Add(tl); verts.Add(jtl2);
-                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(0.3f, 0));
-                        uvs.Add(new Vector2(0.3f, 1)); uvs.Add(new Vector2(0, 1));
-                        wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
-                        wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+                        // Sill bottom face (casts shadow)
+                        si = verts.Count;
+                        verts.Add(s_ibl); verts.Add(s_ibr); verts.Add(s_obr); verts.Add(s_obl);
+                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                        uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                        colors.Add(sillColor * 0.7f); colors.Add(sillColor * 0.7f); colors.Add(sillColor * 0.7f); colors.Add(sillColor * 0.7f);
+                        wallTris.Add(si); wallTris.Add(si + 1); wallTris.Add(si + 2);
+                        wallTris.Add(si); wallTris.Add(si + 2); wallTris.Add(si + 3);
 
-                        // Right jamb
-                        Vector3 jbr = wCenter + wallDir * halfW; jbr.y = winBot;
-                        Vector3 jtr2 = wCenter + wallDir * halfW; jtr2.y = winTop;
-                        bi = verts.Count;
-                        verts.Add(br); verts.Add(jbr); verts.Add(jtr2); verts.Add(tr);
-                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(0.3f, 0));
-                        uvs.Add(new Vector2(0.3f, 1)); uvs.Add(new Vector2(0, 1));
-                        wallTris.Add(bi); wallTris.Add(bi + 2); wallTris.Add(bi + 1);
-                        wallTris.Add(bi); wallTris.Add(bi + 3); wallTris.Add(bi + 2);
+                        // ── 3. WINDOW FRAME & LINTEL HEADER (Submesh 0) ──
+                        // Dark charcoal architectural trim framing the opening
+                        float frameExt = 0.045f;
+                        float frameThick = 0.06f;
+                        Vector3 fOffset = outward * frameExt;
+
+                        // Top lintel bar
+                        Vector3 l_bl = wCenter - wallDir * (halfW + frameThick) + fOffset; l_bl.y = winTop;
+                        Vector3 l_br = wCenter + wallDir * (halfW + frameThick) + fOffset; l_br.y = winTop;
+                        Vector3 l_tr = wCenter + wallDir * (halfW + frameThick) + fOffset; l_tr.y = winTop + frameThick;
+                        Vector3 l_tl = wCenter - wallDir * (halfW + frameThick) + fOffset; l_tl.y = winTop + frameThick;
+
+                        int fi = verts.Count;
+                        verts.Add(l_bl); verts.Add(l_br); verts.Add(l_tr); verts.Add(l_tl);
+                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                        uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                        colors.Add(frameColor); colors.Add(frameColor); colors.Add(frameColor); colors.Add(frameColor);
+                        wallTris.Add(fi); wallTris.Add(fi + 2); wallTris.Add(fi + 1);
+                        wallTris.Add(fi); wallTris.Add(fi + 3); wallTris.Add(fi + 2);
+
+                        // Left frame jamb
+                        Vector3 j1_bl = wCenter - wallDir * (halfW + frameThick) + fOffset; j1_bl.y = winBot;
+                        Vector3 j1_br = wCenter - wallDir * halfW + fOffset; j1_br.y = winBot;
+                        Vector3 j1_tr = wCenter - wallDir * halfW + fOffset; j1_tr.y = winTop;
+                        Vector3 j1_tl = wCenter - wallDir * (halfW + frameThick) + fOffset; j1_tl.y = winTop;
+
+                        fi = verts.Count;
+                        verts.Add(j1_bl); verts.Add(j1_br); verts.Add(j1_tr); verts.Add(j1_tl);
+                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                        uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                        colors.Add(frameColor); colors.Add(frameColor); colors.Add(frameColor); colors.Add(frameColor);
+                        wallTris.Add(fi); wallTris.Add(fi + 2); wallTris.Add(fi + 1);
+                        wallTris.Add(fi); wallTris.Add(fi + 3); wallTris.Add(fi + 2);
+
+                        // Right frame jamb
+                        Vector3 j2_bl = wCenter + wallDir * halfW + fOffset; j2_bl.y = winBot;
+                        Vector3 j2_br = wCenter + wallDir * (halfW + frameThick) + fOffset; j2_br.y = winBot;
+                        Vector3 j2_tr = wCenter + wallDir * (halfW + frameThick) + fOffset; j2_tr.y = winTop;
+                        Vector3 j2_tl = wCenter + wallDir * halfW + fOffset; j2_tl.y = winTop;
+
+                        fi = verts.Count;
+                        verts.Add(j2_bl); verts.Add(j2_br); verts.Add(j2_tr); verts.Add(j2_tl);
+                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                        uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                        colors.Add(frameColor); colors.Add(frameColor); colors.Add(frameColor); colors.Add(frameColor);
+                        wallTris.Add(fi); wallTris.Add(fi + 2); wallTris.Add(fi + 1);
+                        wallTris.Add(fi); wallTris.Add(fi + 3); wallTris.Add(fi + 2);
+
+                        // ── 4. VERTICAL CENTER MULLION (Submesh 0) ──
+                        // Dark structural divider down the middle of the window pane
+                        float mullW = 0.035f;
+                        Vector3 mOffset = outward * 0.035f;
+                        Vector3 m_bl = wCenter - wallDir * mullW + mOffset; m_bl.y = winBot;
+                        Vector3 m_br = wCenter + wallDir * mullW + mOffset; m_br.y = winBot;
+                        Vector3 m_tr = wCenter + wallDir * mullW + mOffset; m_tr.y = winTop;
+                        Vector3 m_tl = wCenter - wallDir * mullW + mOffset; m_tl.y = winTop;
+
+                        fi = verts.Count;
+                        verts.Add(m_bl); verts.Add(m_br); verts.Add(m_tr); verts.Add(m_tl);
+                        uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0));
+                        uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
+                        colors.Add(frameColor); colors.Add(frameColor); colors.Add(frameColor); colors.Add(frameColor);
+                        wallTris.Add(fi); wallTris.Add(fi + 2); wallTris.Add(fi + 1);
+                        wallTris.Add(fi); wallTris.Add(fi + 3); wallTris.Add(fi + 2);
                     }
                 }
             }
@@ -726,7 +875,7 @@ namespace GeoCity3D.Geometry
         //  UTILITY
         // ══════════════════════════════════════════════════════════════
 
-        private static List<Vector3> ExtractFootprint(OsmWay way, OsmData data, OriginShifter originShifter)
+        public static List<Vector3> ExtractFootprint(OsmWay way, OsmData data, OriginShifter originShifter)
         {
             List<Vector3> footprint = new List<Vector3>();
             foreach (long nodeId in way.NodeIds)
@@ -741,12 +890,22 @@ namespace GeoCity3D.Geometry
             return footprint.Count < 3 ? null : footprint;
         }
 
-        private static float PolygonArea(List<Vector3> pts)
+        public static float PolygonArea(List<Vector3> pts)
         {
             float a = 0f;
             for (int i = 0, j = pts.Count - 1; i < pts.Count; j = i++)
                 a += pts[j].x * pts[i].z - pts[i].x * pts[j].z;
             return a * 0.5f;
+        }
+
+        public static Vector3 ComputeCentroid(List<Vector3> pts)
+        {
+            if (pts == null || pts.Count == 0) return Vector3.zero;
+            Vector3 c = Vector3.zero;
+            for (int i = 0; i < pts.Count; i++)
+                c += pts[i];
+            c /= pts.Count;
+            return c;
         }
 
         private static float PolygonArea2D(List<Vector3> pts)
@@ -768,7 +927,38 @@ namespace GeoCity3D.Geometry
             }
         }
 
-        private static float DetermineHeight(OsmWay way, float footprintArea)
+        public static float DetermineMinHeight(OsmWay way)
+        {
+            if (way.Tags == null) return 0f;
+
+            string minHStr = way.GetTag("min_height") ?? way.GetTag("building:min_height");
+            if (!string.IsNullOrEmpty(minHStr))
+            {
+                if (float.TryParse(minHStr.Replace("m", "").Trim(),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out float h))
+                {
+                    return Mathf.Max(0f, h);
+                }
+            }
+
+            string minLStr = way.GetTag("min_level") ?? way.GetTag("building:min_level");
+            if (!string.IsNullOrEmpty(minLStr))
+            {
+                if (float.TryParse(minLStr.Trim(),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out float lvl))
+                {
+                    return Mathf.Max(0f, lvl * 3.2f);
+                }
+            }
+
+            return 0f;
+        }
+
+        public static float DetermineHeight(OsmWay way, float footprintArea)
         {
             if (way.Tags.ContainsKey("height"))
             {
