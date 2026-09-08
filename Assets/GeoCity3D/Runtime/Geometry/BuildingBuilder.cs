@@ -284,6 +284,20 @@ namespace GeoCity3D.Geometry
 
             mf.sharedMesh = mesh;
 
+            // ── Apply per-building colors via MaterialPropertyBlock ──
+            // URP/Lit and Standard shaders don't read vertex colors,
+            // so we use MaterialPropertyBlock for per-instance tinting.
+            // This works with GPU instancing (no new materials created).
+            MaterialPropertyBlock wallBlock = new MaterialPropertyBlock();
+            wallBlock.SetColor("_BaseColor", buildingColor); // URP
+            wallBlock.SetColor("_Color", buildingColor);     // Standard fallback
+            mr.SetPropertyBlock(wallBlock, 0); // submesh 0 = walls
+
+            MaterialPropertyBlock roofBlock = new MaterialPropertyBlock();
+            roofBlock.SetColor("_BaseColor", roofColor);
+            roofBlock.SetColor("_Color", roofColor);
+            mr.SetPropertyBlock(roofBlock, 1); // submesh 1 = roof
+
             // Tight-fitting collider (DISABLED by default for massive city performance)
             // MeshCollider col = go.AddComponent<MeshCollider>();
             // col.sharedMesh = mesh;

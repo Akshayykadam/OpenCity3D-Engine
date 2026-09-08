@@ -52,7 +52,7 @@ namespace GeoCity3D.Visuals
 
             // Natural warm daylight (crisp, balanced sunlight)
             sun.color = new Color(1.0f, 0.96f, 0.90f);
-            sun.intensity = 1.25f;
+            sun.intensity = 1.0f;
 
             // Soft realistic shadows with tight bias to prevent shadow detachment / Peter-Panning
             sun.shadows = LightShadows.Soft;
