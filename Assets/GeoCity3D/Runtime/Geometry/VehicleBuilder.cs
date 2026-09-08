@@ -19,6 +19,13 @@ namespace GeoCity3D.Geometry
             if (roadPath == null || roadPath.Count < 2) return vehicles;
             if (vehiclePrefabs == null || vehiclePrefabs.Length == 0) return vehicles;
 
+            List<GameObject> validPrefabs = new List<GameObject>();
+            for (int p = 0; p < vehiclePrefabs.Length; p++)
+            {
+                if (vehiclePrefabs[p] != null) validPrefabs.Add(vehiclePrefabs[p]);
+            }
+            if (validPrefabs.Count == 0) return vehicles;
+
             float accumulated = 0f;
             bool rightSide = true;
 
@@ -46,7 +53,8 @@ namespace GeoCity3D.Geometry
                     Vector3 vehiclePos = point + right * offset;
                     vehiclePos.y = point.y;
 
-                    GameObject prefab = vehiclePrefabs[Random.Range(0, vehiclePrefabs.Length)];
+                    GameObject prefab = validPrefabs[Random.Range(0, validPrefabs.Count)];
+                    if (prefab == null) { pos += spacing; continue; }
 
                     // Face along road direction; flip 180° on left side so cars face "forward"
                     float yAngle = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;

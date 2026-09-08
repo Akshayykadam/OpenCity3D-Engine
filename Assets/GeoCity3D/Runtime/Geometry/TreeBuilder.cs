@@ -292,7 +292,16 @@ namespace GeoCity3D.Geometry
         {
             if (prefabs == null || prefabs.Length == 0) return null;
 
-            GameObject prefab = prefabs[Random.Range(0, prefabs.Length)];
+            List<GameObject> validPrefabs = new List<GameObject>();
+            for (int p = 0; p < prefabs.Length; p++)
+            {
+                if (prefabs[p] != null) validPrefabs.Add(prefabs[p]);
+            }
+            if (validPrefabs.Count == 0) return null;
+
+            GameObject prefab = validPrefabs[Random.Range(0, validPrefabs.Count)];
+            if (prefab == null) return null;
+
             float yAngle = Random.Range(0f, 360f);
             GameObject tree = Object.Instantiate(prefab, position, Quaternion.Euler(0f, yAngle, 0f));
             tree.name = "Tree_Prefab";

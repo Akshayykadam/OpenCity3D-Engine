@@ -171,18 +171,8 @@ namespace GeoCity3D.Editor
                 new Color(0.18f, 0.55f, 0.12f), 0.05f);
             controller.WaterMaterial = CreateWaterMaterialAsset(matPath, "WaterMat", shader);
 
-            // ── Setup Skybox ──
-            Material skyMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/BOXOPHOBIC/Skybox Cubemap Extended/Demo/Materials/Polyverse Skies - Blue Sky.mat");
-            if (skyMat == null)
-                skyMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/GeoCity3D/Materials/Skybox_BlueSky.mat");
-
-            if (skyMat != null)
-            {
-                RenderSettings.skybox = skyMat;
-                RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Skybox;
-                RenderSettings.ambientIntensity = 1.25f;
-                DynamicGI.UpdateEnvironment();
-            }
+            // ── Setup Atmosphere, Realistic Lighting, Reflection Probes & Aerial Fog ──
+            GeoCity3D.Visuals.SceneSetup.Setup(500f);
 
             EditorUtility.SetDirty(controller);
             Selection.activeGameObject = controller.gameObject;
@@ -318,17 +308,14 @@ namespace GeoCity3D.Editor
             if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.96f);
             if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.15f);
 
-            // Procedural aquatic caustic texture and wave normal map
-            Texture2D waterTex = TextureGenerator.CreateWaterTexture(512, 512);
-            Texture2D waterNormal = TextureGenerator.CreateWaterNormalMap(512, 512);
+            // Use persistent water texture asset on disk so it persists across Play Mode and domain reloads
+            Texture2D waterTex = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/GeoCity3D/Textures/water.jpg");
+            if (waterTex == null)
+                waterTex = TextureGenerator.CreateWaterTexture(512, 512);
 
             mat.mainTexture = waterTex;
-            if (mat.HasProperty("_BumpMap") && waterNormal != null)
-            {
-                mat.SetTexture("_BumpMap", waterNormal);
-                mat.EnableKeyword("_NORMALMAP");
-                mat.SetFloat("_BumpScale", 1.25f);
-            }
+            if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", waterTex);
+            if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", waterTex);
 
             // Transparency configuration for Standard / Lit
             if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f); // URP

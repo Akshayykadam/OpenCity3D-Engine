@@ -65,6 +65,36 @@ namespace GeoCity3D
 
         // Backward compatibility
         public Material BuildingMaterial => BuildingWallMaterial;
+
+        private void Awake()
+        {
+            ApplyPlayModeOptimizations();
+        }
+
+        private void Start()
+        {
+            ApplyPlayModeOptimizations();
+        }
+
+        /// <summary>
+        /// Applies runtime distance culling when entering Play Mode.
+        /// (Camera.layerCullDistances is a runtime-only property and must be set via script in Play Mode).
+        /// </summary>
+        public static void ApplyPlayModeOptimizations()
+        {
+            Camera mainCam = Camera.main;
+            if (mainCam != null)
+            {
+                float[] cullDistances = new float[32];
+                int grassLayer = LayerMask.NameToLayer("Grass");
+                if (grassLayer >= 0) cullDistances[grassLayer] = 110f;
+                int propsLayer = LayerMask.NameToLayer("Props");
+                if (propsLayer >= 0) cullDistances[propsLayer] = 180f;
+
+                mainCam.layerCullDistances = cullDistances;
+                mainCam.layerCullSpherical = true;
+            }
+        }
     }
 }
 

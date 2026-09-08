@@ -23,6 +23,16 @@ namespace GeoCity3D.Geometry
         /// <param name="parent">Parent transform for spawned objects.</param>
         /// <param name="cellSize">Grid cell size in meters (default 12m).</param>
         /// <returns>Number of vegetation objects placed.</returns>
+        private static bool HasValidPrefabs(GameObject[] arr)
+        {
+            if (arr == null || arr.Length == 0) return false;
+            for (int i = 0; i < arr.Length; i++)
+            {
+                if (arr[i] != null) return true;
+            }
+            return false;
+        }
+
         public static int FillEmptyLots(
             Bounds cityBounds,
             List<Bounds> buildingBounds,
@@ -38,10 +48,10 @@ namespace GeoCity3D.Geometry
             Transform grassParent = null,
             Shader shader = null)
         {
-            bool hasTrees = treePrefabs != null && treePrefabs.Length > 0;
-            bool hasBushes = bushPrefabs != null && bushPrefabs.Length > 0;
-            bool hasRocks = rockPrefabs != null && rockPrefabs.Length > 0;
-            bool hasGrass = (grassPrefabs != null && grassPrefabs.Length > 0) || (shader != null && grassParent != null);
+            bool hasTrees = HasValidPrefabs(treePrefabs);
+            bool hasBushes = HasValidPrefabs(bushPrefabs);
+            bool hasRocks = HasValidPrefabs(rockPrefabs);
+            bool hasGrass = HasValidPrefabs(grassPrefabs) || (shader != null && grassParent != null);
 
             if (!hasTrees && !hasBushes && !hasRocks && !hasGrass) return 0;
 
@@ -196,7 +206,7 @@ namespace GeoCity3D.Geometry
                     // Populate lush grass clusters in empty parcels
                     if (hasGrass)
                     {
-                        int grassTufts = Random.Range(1, 4);
+                        int grassTufts = Random.Range(3, 7);
                         for (int g = 0; g < grassTufts; g++)
                         {
                             Vector3 gPos = new Vector3(

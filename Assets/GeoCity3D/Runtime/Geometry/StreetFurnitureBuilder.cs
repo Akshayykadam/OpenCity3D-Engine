@@ -101,6 +101,13 @@ namespace GeoCity3D.Geometry
             if (roadPath == null || roadPath.Count < 2) return lights;
             if (prefabs == null || prefabs.Length == 0) return lights;
 
+            List<GameObject> validPrefabs = new List<GameObject>();
+            for (int p = 0; p < prefabs.Length; p++)
+            {
+                if (prefabs[p] != null) validPrefabs.Add(prefabs[p]);
+            }
+            if (validPrefabs.Count == 0) return lights;
+
             float accumulated = 0f;
             bool rightSide = true;
 
@@ -120,7 +127,8 @@ namespace GeoCity3D.Geometry
                     Vector3 lightPos = point + right * offset;
                     lightPos.y = point.y;
 
-                    GameObject prefab = prefabs[Random.Range(0, prefabs.Length)];
+                    GameObject prefab = validPrefabs[Random.Range(0, validPrefabs.Count)];
+                    if (prefab == null) { pos += spacing; continue; }
                     float yAngle = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
                     // Face toward the road
                     if (rightSide) yAngle += 90f; else yAngle -= 90f;
@@ -153,6 +161,13 @@ namespace GeoCity3D.Geometry
             if (roadPath == null || roadPath.Count < 2) return props;
             if (propPrefabs == null || propPrefabs.Length == 0) return props;
 
+            List<GameObject> validPrefabs = new List<GameObject>();
+            for (int p = 0; p < propPrefabs.Length; p++)
+            {
+                if (propPrefabs[p] != null) validPrefabs.Add(propPrefabs[p]);
+            }
+            if (validPrefabs.Count == 0) return props;
+
             float accumulated = 0f;
             bool rightSide = true;
 
@@ -180,7 +195,8 @@ namespace GeoCity3D.Geometry
                     Vector3 propPos = point + right * offset;
                     propPos.y = point.y;
 
-                    GameObject prefab = propPrefabs[Random.Range(0, propPrefabs.Length)];
+                    GameObject prefab = validPrefabs[Random.Range(0, validPrefabs.Count)];
+                    if (prefab == null) { pos += spacing; continue; }
                     float yAngle = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
 
                     GameObject prop = Object.Instantiate(prefab, propPos,
@@ -210,6 +226,13 @@ namespace GeoCity3D.Geometry
             List<GameObject> signals = new List<GameObject>();
             if (prefabs == null || prefabs.Length == 0) return signals;
 
+            List<GameObject> validPrefabs = new List<GameObject>();
+            for (int p = 0; p < prefabs.Length; p++)
+            {
+                if (prefabs[p] != null) validPrefabs.Add(prefabs[p]);
+            }
+            if (validPrefabs.Count == 0) return signals;
+
             foreach (var pos in intersectionPositions)
             {
                 // Place 2-4 signals per intersection on different corners
@@ -224,7 +247,8 @@ namespace GeoCity3D.Geometry
                         Mathf.Sin(angle * Mathf.Deg2Rad) * dist);
                     signalPos.y = 0f;
 
-                    GameObject prefab = prefabs[Random.Range(0, prefabs.Length)];
+                    GameObject prefab = validPrefabs[Random.Range(0, validPrefabs.Count)];
+                    if (prefab == null) continue;
                     GameObject signal = Object.Instantiate(prefab, signalPos,
                         Quaternion.Euler(0f, angle + 180f, 0f));
                     signal.name = $"TrafficSignal_{signals.Count}";

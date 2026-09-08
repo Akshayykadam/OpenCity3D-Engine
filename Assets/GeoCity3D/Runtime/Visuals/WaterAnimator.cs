@@ -10,15 +10,15 @@ namespace GeoCity3D.Visuals
     [ExecuteAlways]
     public class WaterAnimator : MonoBehaviour
     {
-        [Header("Flow & Wave Settings")]
-        [Tooltip("Speed of downstream water flow")]
-        public float FlowSpeed = 0.12f;
+        [Header("Flow & Wave Settings (Disabled for static calm water)")]
+        [Tooltip("Speed of downstream water flow (0 = static calm water)")]
+        public float FlowSpeed = 0f;
 
         [Tooltip("Direction of river current in UV space")]
         public Vector2 FlowDirection = new Vector2(0f, 1f);
 
-        [Tooltip("Speed of secondary surface ripple wavelets")]
-        public float RippleSpeed = 0.07f;
+        [Tooltip("Speed of secondary surface ripple wavelets (0 = static calm water)")]
+        public float RippleSpeed = 0f;
 
         [Tooltip("Secondary wave drift direction for dual-wave interference")]
         public Vector2 RippleDirection = new Vector2(0.6f, 0.8f);
@@ -59,6 +59,8 @@ namespace GeoCity3D.Visuals
 
         private void Update()
         {
+            if (FlowSpeed <= 0.0001f && RippleSpeed <= 0.0001f) return;
+
             if (_activeMat == null)
             {
                 Initialize();

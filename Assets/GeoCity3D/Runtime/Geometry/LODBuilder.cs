@@ -1,15 +1,30 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 namespace GeoCity3D.Geometry
 {
     /// <summary>
     /// Adds automatic LOD (Level of Detail) to building GameObjects.
-    /// LOD0: Full model, LOD1: Simple box mesh, LOD2: Culled.
+    /// Optimized for massive cities:
+    /// - LOD0: Full architectural model (up close).
+    /// - LOD1: Simplified box sharing a single unit cube mesh and an 8-color quantized palette with GPU Instancing.
+    /// - LOD2: Culled at distance to preserve GPU rasterization and vertex budget.
     /// </summary>
     public static class LODBuilder
     {
+        private static Mesh _sharedUnitCube;
+        private static readonly Dictionary<int, Material> _sharedPalette = new Dictionary<int, Material>();
+
         /// <summary>
-        /// Adds a LODGroup to the given building with a simplified box LOD1.
+        /// Clears the cached material palette between city generation runs.
+        /// </summary>
+        public static void ResetPalette()
+        {
+            _sharedPalette.Clear();
+        }
+
+        /// <summary>
+        /// Adds a LODGroup to the given building with a simplified instanced box LOD1.
         /// </summary>
         /// <param name="building">The building GameObject to add LOD to.</param>
         /// <param name="lodMaterial">Material to use for the LOD1 box (optional, auto-picks dominant color if null).</param>
@@ -29,32 +44,33 @@ namespace GeoCity3D.Geometry
             // Skip tiny objects
             if (totalBounds.size.magnitude < 0.5f) return;
 
-            // Auto-pick dominant color from LOD0 if no material provided
+            // Pick dominant color from LOD0 if no material provided, mapped to shared instanced palette
             if (lodMaterial == null)
             {
-                lodMaterial = CreateLODMaterial(lod0Renderers);
+                Color dominant = GetDominantColor(lod0Renderers);
+                lodMaterial = GetOrCreateSharedPaletteMaterial(dominant);
             }
 
-            // Create LOD1: a simple box that matches the building bounds
+            // Create LOD1: an instanced box sharing the unit cube mesh scaled to building dimensions
             GameObject lod1Box = CreateBoxLOD(building, totalBounds, lodMaterial);
 
             // Add LODGroup component
             LODGroup lodGroup = building.AddComponent<LODGroup>();
 
             LOD[] lods = new LOD[3];
-            // LOD0: Full detail (visible when building occupies > 5% of screen)
-            lods[0] = new LOD(0.05f, lod0Renderers);
-            // LOD1: Simple box (visible between 5% and 1% of screen)
-            lods[1] = new LOD(0.01f, lod1Box.GetComponentsInChildren<Renderer>());
-            // LOD2: Culled (below 1% of screen — too far to see)
-            lods[2] = new LOD(0f, new Renderer[0]);
+            // LOD0: Full detail (visible when building occupies > 12% of screen height)
+            lods[0] = new LOD(0.12f, lod0Renderers);
+            // LOD1: Instanced box (visible between 12% and 3% of screen height)
+            lods[1] = new LOD(0.03f, lod1Box.GetComponentsInChildren<Renderer>());
+            // LOD2: Culled (below 0.8% of screen height — too far to resolve individual buildings)
+            lods[2] = new LOD(0.008f, new Renderer[0]);
 
             lodGroup.SetLODs(lods);
             lodGroup.RecalculateBounds();
         }
 
         /// <summary>
-        /// Creates a simple box mesh that matches the building's bounding box.
+        /// Creates a simple box mesh that matches the building's bounding box using a shared unit cube.
         /// </summary>
         private static GameObject CreateBoxLOD(GameObject parent, Bounds bounds, Material mat)
         {
@@ -65,64 +81,62 @@ namespace GeoCity3D.Geometry
             Vector3 localCenter = parent.transform.InverseTransformPoint(bounds.center);
             box.transform.localPosition = localCenter;
 
-            // Create box mesh matching the bounds size
-            MeshFilter mf = box.AddComponent<MeshFilter>();
-            MeshRenderer mr = box.AddComponent<MeshRenderer>();
-
-            // Scale the box to match building dimensions
+            // Scale the box to match building dimensions (accounting for parent scale)
             Vector3 boundsSize = bounds.size;
-            // Transform bounds size to local space (account for parent scale)
             Vector3 parentScale = parent.transform.lossyScale;
             Vector3 localSize = new Vector3(
                 parentScale.x != 0 ? boundsSize.x / parentScale.x : boundsSize.x,
                 parentScale.y != 0 ? boundsSize.y / parentScale.y : boundsSize.y,
                 parentScale.z != 0 ? boundsSize.z / parentScale.z : boundsSize.z
             );
+            box.transform.localScale = localSize;
 
-            mf.sharedMesh = CreateBoxMesh(localSize);
+            MeshFilter mf = box.AddComponent<MeshFilter>();
+            MeshRenderer mr = box.AddComponent<MeshRenderer>();
+
+            mf.sharedMesh = GetSharedUnitCube();
             mr.sharedMaterial = mat;
 
-            // Disable shadow casting for LOD1 to save performance
+            // Disable shadow casting for LOD1 to save performance, keep shadow receiving
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = true;
 
-            // Start disabled — LODGroup will enable it when needed
             box.SetActive(true);
-
             return box;
         }
 
         /// <summary>
-        /// Creates a box mesh with the given dimensions centered at origin.
+        /// Returns a single shared unit cube mesh (1x1x1 centered at origin) reused across all LOD1 boxes.
+        /// This enables Unity GPU Instancing to draw thousands of buildings in a few draw calls.
         /// </summary>
-        private static Mesh CreateBoxMesh(Vector3 size)
+        private static Mesh GetSharedUnitCube()
         {
-            Mesh mesh = new Mesh();
-            mesh.name = "LOD_Box";
+            if (_sharedUnitCube != null) return _sharedUnitCube;
 
-            float w = size.x * 0.5f;
-            float h = size.y * 0.5f;
-            float d = size.z * 0.5f;
+            _sharedUnitCube = new Mesh();
+            _sharedUnitCube.name = "LOD_SharedUnitCube";
+            float half = 0.5f;
 
             Vector3[] vertices = new Vector3[]
             {
-                // Front face
-                new Vector3(-w, -h, -d), new Vector3( w, -h, -d),
-                new Vector3( w,  h, -d), new Vector3(-w,  h, -d),
-                // Back face
-                new Vector3( w, -h,  d), new Vector3(-w, -h,  d),
-                new Vector3(-w,  h,  d), new Vector3( w,  h,  d),
-                // Top face
-                new Vector3(-w,  h, -d), new Vector3( w,  h, -d),
-                new Vector3( w,  h,  d), new Vector3(-w,  h,  d),
-                // Bottom face
-                new Vector3(-w, -h,  d), new Vector3( w, -h,  d),
-                new Vector3( w, -h, -d), new Vector3(-w, -h, -d),
-                // Left face
-                new Vector3(-w, -h,  d), new Vector3(-w, -h, -d),
-                new Vector3(-w,  h, -d), new Vector3(-w,  h,  d),
-                // Right face
-                new Vector3( w, -h, -d), new Vector3( w, -h,  d),
-                new Vector3( w,  h,  d), new Vector3( w,  h, -d),
+                // Front face (-Z)
+                new Vector3(-half, -half, -half), new Vector3( half, -half, -half),
+                new Vector3( half,  half, -half), new Vector3(-half,  half, -half),
+                // Back face (+Z)
+                new Vector3( half, -half,  half), new Vector3(-half, -half,  half),
+                new Vector3(-half,  half,  half), new Vector3( half,  half,  half),
+                // Top face (+Y)
+                new Vector3(-half,  half, -half), new Vector3( half,  half, -half),
+                new Vector3( half,  half,  half), new Vector3(-half,  half,  half),
+                // Bottom face (-Y)
+                new Vector3(-half, -half,  half), new Vector3( half, -half,  half),
+                new Vector3( half, -half, -half), new Vector3(-half, -half, -half),
+                // Left face (-X)
+                new Vector3(-half, -half,  half), new Vector3(-half, -half, -half),
+                new Vector3(-half,  half, -half), new Vector3(-half,  half,  half),
+                // Right face (+X)
+                new Vector3( half, -half, -half), new Vector3( half, -half,  half),
+                new Vector3( half,  half,  half), new Vector3( half,  half, -half),
             };
 
             int[] triangles = new int[]
@@ -145,27 +159,26 @@ namespace GeoCity3D.Geometry
                 Vector3.right, Vector3.right, Vector3.right, Vector3.right,
             };
 
-            mesh.vertices = vertices;
-            mesh.triangles = triangles;
-            mesh.normals = normals;
+            _sharedUnitCube.vertices = vertices;
+            _sharedUnitCube.triangles = triangles;
+            _sharedUnitCube.normals = normals;
+            _sharedUnitCube.RecalculateBounds();
 
-            return mesh;
+            return _sharedUnitCube;
         }
 
         /// <summary>
-        /// Creates a simple material that matches the dominant color of the building.
+        /// Finds dominant color across renderers.
         /// </summary>
-        private static Material CreateLODMaterial(Renderer[] renderers)
+        private static Color GetDominantColor(Renderer[] renderers)
         {
-            // Find the most common color across all renderers
-            Color dominantColor = Color.gray;
+            Color dominantColor = new Color(0.7f, 0.7f, 0.7f);
             float largestArea = 0f;
 
             foreach (var r in renderers)
             {
-                if (r.sharedMaterial != null)
+                if (r != null && r.sharedMaterial != null)
                 {
-                    // Estimate "importance" by renderer bounds area
                     float area = r.bounds.size.x * r.bounds.size.y +
                                  r.bounds.size.y * r.bounds.size.z +
                                  r.bounds.size.x * r.bounds.size.z;
@@ -177,24 +190,42 @@ namespace GeoCity3D.Geometry
                             dominantColor = r.sharedMaterial.color;
                         else if (r.sharedMaterial.HasProperty("_BaseColor"))
                             dominantColor = r.sharedMaterial.GetColor("_BaseColor");
-                        else
-                            dominantColor = Color.gray;
                     }
                 }
             }
 
-            // Create a simple unlit-like material for performance
+            return dominantColor;
+        }
+
+        /// <summary>
+        /// Returns a quantized palette material with GPU Instancing enabled.
+        /// Quantizes RGB to 4 discrete levels, allowing thousands of distant buildings
+        /// to share a handful of materials and render with GPU instancing.
+        /// </summary>
+        public static Material GetOrCreateSharedPaletteMaterial(Color dominantColor)
+        {
+            int r = Mathf.Clamp(Mathf.RoundToInt(dominantColor.r * 3f), 0, 3);
+            int g = Mathf.Clamp(Mathf.RoundToInt(dominantColor.g * 3f), 0, 3);
+            int b = Mathf.Clamp(Mathf.RoundToInt(dominantColor.b * 3f), 0, 3);
+            int key = (r << 4) | (g << 2) | b;
+
+            if (_sharedPalette.TryGetValue(key, out Material mat) && mat != null)
+                return mat;
+
             Shader shader = Shader.Find("Universal Render Pipeline/Lit");
             if (shader == null) shader = Shader.Find("Standard");
-            Material mat = new Material(shader);
-            mat.name = "LOD_Auto";
-            mat.color = dominantColor;
+
+            mat = new Material(shader);
+            mat.name = $"LOD1_SharedPalette_{key}";
+            Color quantizedColor = new Color(r / 3f, g / 3f, b / 3f, 1f);
+            mat.color = quantizedColor;
             if (mat.HasProperty("_BaseColor"))
-                mat.SetColor("_BaseColor", dominantColor);
-            // Low smoothness for matte look matching low-poly aesthetic
+                mat.SetColor("_BaseColor", quantizedColor);
             if (mat.HasProperty("_Smoothness"))
                 mat.SetFloat("_Smoothness", 0.1f);
+            mat.enableInstancing = true;
 
+            _sharedPalette[key] = mat;
             return mat;
         }
     }

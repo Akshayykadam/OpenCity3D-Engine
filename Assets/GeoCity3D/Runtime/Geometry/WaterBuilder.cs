@@ -141,11 +141,6 @@ namespace GeoCity3D.Geometry
 
             mf.sharedMesh = mesh;
 
-            WaterAnimator anim = go.AddComponent<WaterAnimator>();
-            anim.IsRiver = false;
-            anim.TargetMaterial = waterMat;
-            anim.RippleSpeed = 0.05f;
-
             return go;
         }
 
@@ -282,11 +277,6 @@ namespace GeoCity3D.Geometry
             mesh.RecalculateBounds();
 
             mf.sharedMesh = mesh;
-
-            WaterAnimator anim = go.AddComponent<WaterAnimator>();
-            anim.IsRiver = true;
-            anim.TargetMaterial = waterMat;
-            anim.FlowSpeed = 0.12f;
 
             return go;
         }

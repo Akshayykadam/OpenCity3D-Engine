@@ -28,7 +28,7 @@ namespace GeoCity3D.Geometry
 
         public static void EnsureMaterialPool(Shader shader)
         {
-            if (_sharedGrassMats != null && _sharedGrassMats.Length > 0) return;
+            if (_sharedGrassMats != null && _sharedGrassMats.Length > 0 && _sharedGrassMats[0] != null) return;
 
             _sharedGrassMats = new Material[GrassColors.Length];
             for (int i = 0; i < GrassColors.Length; i++)
@@ -43,14 +43,17 @@ namespace GeoCity3D.Geometry
                 if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", grassTex);
 
                 // 2. Primary color properties (URP _BaseColor + Standard _Color)
-                mat.color = GrassColors[i];
-                if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", GrassColors[i]);
-                if (mat.HasProperty("_Color")) mat.SetColor("_Color", GrassColors[i]);
+                mat.color = Color.white;
+                if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", Color.white);
+                if (mat.HasProperty("_Color")) mat.SetColor("_Color", Color.white);
 
-                // 3. Two-sided rendering so blade back-faces are never culled or black
+                // 3. Matte foliage surface: two-sided, non-metallic, zero glossy glare blowout
                 if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
+                if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0f);
                 if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.04f);
                 if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.04f);
+                if (mat.HasProperty("_SpecularHighlights")) mat.SetFloat("_SpecularHighlights", 0f);
+                if (mat.HasProperty("_GlossyReflections")) mat.SetFloat("_GlossyReflections", 0f);
 
                 mat.renderQueue = 2000;
                 mat.enableInstancing = true;
@@ -116,17 +119,18 @@ namespace GeoCity3D.Geometry
             MeshFilter mf = go.AddComponent<MeshFilter>();
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
             mr.sharedMaterial = _sharedGrassMats[matIdx];
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             mr.receiveShadows = true;
 
             Mesh mesh = new Mesh();
             List<Vector3> verts = new List<Vector3>();
+            List<Vector3> normals = new List<Vector3>();
             List<int> tris = new List<int>();
             List<Vector2> uvs = new List<Vector2>();
             List<Color> colors = new List<Color>();
 
-            // Generate 8 to 14 multi-faceted stylized blades arranged in layers
-            int bladeCount = Random.Range(8, 15);
+            // Generate 8 to 12 multi-faceted stylized blades arranged in layers (balanced for high density & 60+ FPS)
+            int bladeCount = Random.Range(8, 13);
             float angleStep = 360f / bladeCount;
 
             for (int b = 0; b < bladeCount; b++)
@@ -137,8 +141,8 @@ namespace GeoCity3D.Geometry
 
                 // Substantial dimensions visible across wide city distances
                 float bladeHeight = Random.Range(0.85f, 1.65f) * scale;
-                float baseWidth = Random.Range(0.18f, 0.32f) * scale;
-                float midWidth = baseWidth * 0.7f;
+                float baseWidth = Random.Range(0.24f, 0.38f) * scale;
+                float midWidth = baseWidth * 0.72f;
                 float midHeight = bladeHeight * 0.55f;
                 float midLean = Random.Range(0.12f, 0.25f) * scale;
                 float tipLean = Random.Range(0.28f, 0.55f) * scale;
@@ -155,16 +159,26 @@ namespace GeoCity3D.Geometry
                 // Tip vertex
                 Vector3 tip = dir * tipLean + new Vector3(0f, bladeHeight, 0f);
 
-                int idx = verts.Count;
-                verts.Add(b0); // 0
-                verts.Add(b1); // 1
-                verts.Add(m0); // 2
-                verts.Add(m1); // 3
-                verts.Add(tip); // 4
+                // Upward-biased foliage dome normals (AAA industry standard for grass).
+                // Front normal faces outward and upward; Back normal faces inward and upward.
+                // Upward bias ensures both sides catch sky ambient and sun light smoothly without black backfaces or NaN zero-vectors!
+                Vector3 nFront = (dir * 0.35f + Vector3.up * 0.65f).normalized;
+                Vector3 nBack = (-dir * 0.35f + Vector3.up * 0.65f).normalized;
 
                 // Vertex colors: dark root green -> vibrant mid green -> bright golden tip
                 Color rootCol = Color.Lerp(chosenColor, new Color(0.06f, 0.22f, 0.04f), 0.60f);
                 Color tipCol = Color.Lerp(chosenColor, new Color(0.46f, 0.85f, 0.18f), 0.40f);
+
+                // ── 1. FRONT FACE (5 vertices) ──
+                int fIdx = verts.Count;
+                verts.Add(b0);
+                verts.Add(b1);
+                verts.Add(m0);
+                verts.Add(m1);
+                verts.Add(tip);
+
+                for (int i = 0; i < 5; i++) normals.Add(nFront);
+
                 colors.Add(rootCol);
                 colors.Add(rootCol);
                 colors.Add(chosenColor);
@@ -177,22 +191,46 @@ namespace GeoCity3D.Geometry
                 uvs.Add(new Vector2(0.85f, 0.55f));
                 uvs.Add(new Vector2(0.5f, 1f));
 
-                // Double-sided lower quad (b0, b1, m1, m0)
-                tris.Add(idx + 0); tris.Add(idx + 2); tris.Add(idx + 1);
-                tris.Add(idx + 1); tris.Add(idx + 2); tris.Add(idx + 3);
-                tris.Add(idx + 0); tris.Add(idx + 1); tris.Add(idx + 2);
-                tris.Add(idx + 1); tris.Add(idx + 3); tris.Add(idx + 2);
+                // Front quad (b0, b1, m1, m0)
+                tris.Add(fIdx + 0); tris.Add(fIdx + 2); tris.Add(fIdx + 1);
+                tris.Add(fIdx + 1); tris.Add(fIdx + 2); tris.Add(fIdx + 3);
+                // Front upper triangle (m0, tip, m1)
+                tris.Add(fIdx + 2); tris.Add(fIdx + 4); tris.Add(fIdx + 3);
 
-                // Double-sided upper triangle (m0, tip, m1)
-                tris.Add(idx + 2); tris.Add(idx + 4); tris.Add(idx + 3);
-                tris.Add(idx + 2); tris.Add(idx + 3); tris.Add(idx + 4);
+                // ── 2. BACK FACE (5 vertices - separate indices, inverted winding & back normals) ──
+                int bIdx = verts.Count;
+                verts.Add(b0);
+                verts.Add(b1);
+                verts.Add(m0);
+                verts.Add(m1);
+                verts.Add(tip);
+
+                for (int i = 0; i < 5; i++) normals.Add(nBack);
+
+                colors.Add(rootCol);
+                colors.Add(rootCol);
+                colors.Add(chosenColor);
+                colors.Add(chosenColor);
+                colors.Add(tipCol);
+
+                uvs.Add(new Vector2(1f, 0f));
+                uvs.Add(new Vector2(0f, 0f));
+                uvs.Add(new Vector2(0.85f, 0.55f));
+                uvs.Add(new Vector2(0.15f, 0.55f));
+                uvs.Add(new Vector2(0.5f, 1f));
+
+                // Back quad (reversed winding)
+                tris.Add(bIdx + 0); tris.Add(bIdx + 1); tris.Add(bIdx + 2);
+                tris.Add(bIdx + 1); tris.Add(bIdx + 3); tris.Add(bIdx + 2);
+                // Back upper triangle (reversed winding)
+                tris.Add(bIdx + 2); tris.Add(bIdx + 3); tris.Add(bIdx + 4);
             }
 
             mesh.vertices = verts.ToArray();
+            mesh.normals = normals.ToArray();
             mesh.triangles = tris.ToArray();
             mesh.uv = uvs.ToArray();
             mesh.colors = colors.ToArray();
-            mesh.RecalculateNormals();
             mesh.RecalculateBounds();
             mf.sharedMesh = mesh;
 
@@ -206,7 +244,16 @@ namespace GeoCity3D.Geometry
         {
             if (grassPrefabs == null || grassPrefabs.Length == 0) return null;
 
-            GameObject prefab = grassPrefabs[Random.Range(0, grassPrefabs.Length)];
+            List<GameObject> validPrefabs = new List<GameObject>();
+            for (int p = 0; p < grassPrefabs.Length; p++)
+            {
+                if (grassPrefabs[p] != null) validPrefabs.Add(grassPrefabs[p]);
+            }
+            if (validPrefabs.Count == 0) return null;
+
+            GameObject prefab = validPrefabs[Random.Range(0, validPrefabs.Count)];
+            if (prefab == null) return null;
+
             float yRot = Random.Range(0f, 360f);
             GameObject obj = Object.Instantiate(prefab, position, Quaternion.Euler(0f, yRot, 0f));
             obj.name = $"Grass_{Random.Range(100, 999)}";
@@ -269,7 +316,7 @@ namespace GeoCity3D.Geometry
             List<Bounds> beachBounds,
             GameObject[] prefabs,
             Shader shader,
-            float spacing = 7.5f)
+            float spacing = 2.8f)
         {
             if (parent == null) return 0;
             int placedCount = 0;
@@ -338,13 +385,45 @@ namespace GeoCity3D.Geometry
                         if (inBeach) continue;
                     }
 
-                    // Candidate is on open green terrain!
+                    // Candidate is on open green terrain! Spawn primary grass clump
                     float scale = Random.Range(0.85f, 1.45f);
                     GameObject g = BuildGrass(pos, prefabs, shader, scale);
                     if (g != null)
                     {
                         g.transform.SetParent(parent);
                         placedCount++;
+                    }
+
+                    // Layered natural cluster: 45% chance to spawn an adjacent secondary tuft to form lush continuous carpets
+                    if (Random.value < 0.45f)
+                    {
+                        Vector2 offset2D = Random.insideUnitCircle * (spacing * 0.40f);
+                        Vector3 satPos = new Vector3(pos.x + offset2D.x, surfaceY, pos.z + offset2D.y);
+
+                        bool satBlocked = false;
+                        if (buildingBounds != null)
+                        {
+                            for (int b = 0; b < buildingBounds.Count; b++)
+                            {
+                                if (buildingBounds[b].Contains(satPos)) { satBlocked = true; break; }
+                            }
+                        }
+                        if (!satBlocked && roadBounds != null)
+                        {
+                            for (int r = 0; r < roadBounds.Count; r++)
+                            {
+                                if (roadBounds[r].Contains(satPos)) { satBlocked = true; break; }
+                            }
+                        }
+                        if (!satBlocked && !WaterBuilder.IsPointInWater(satPos, waterAreas, waterways, 0.5f))
+                        {
+                            GameObject sat = BuildGrass(satPos, prefabs, shader, Random.Range(0.65f, 1.15f));
+                            if (sat != null)
+                            {
+                                sat.transform.SetParent(parent);
+                                placedCount++;
+                            }
+                        }
                     }
 
                     // Extra riverside grass: if close to water bank (margin 0.8m to 4.5m), spawn a complementary cluster

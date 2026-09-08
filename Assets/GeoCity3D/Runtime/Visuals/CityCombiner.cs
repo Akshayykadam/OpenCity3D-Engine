@@ -5,9 +5,13 @@ namespace GeoCity3D.Visuals
 {
     public static class CityCombiner
     {
+        // 350m spatial sectors for grass: balances layer distance culling with ultra-low chunk count (<30 chunks)
+        public const float GRASS_SPATIAL_CELL_SIZE = 350f;
+
         /// <summary>
-        /// Groups all child meshes of a parent object by material and combines them.
-        /// Dramatically reduces draw calls for mass-instantiated Prefab buildings.
+        /// Combines child meshes of a parent object by material into unified chunk meshes.
+        /// Dramatically cuts draw calls from tens of thousands down to tens.
+        /// Destroys all original individual child GameObjects to eliminate empty transform nodes.
         /// </summary>
         public static void CombineMeshesByMaterial(GameObject parentObj)
         {
@@ -16,12 +20,22 @@ namespace GeoCity3D.Visuals
             MeshFilter[] meshFilters = parentObj.GetComponentsInChildren<MeshFilter>(false);
             if (meshFilters.Length == 0) return;
 
-            // 1. Group all mesh COMBINERS by their exact shared material across all submeshes
-            Dictionary<Material, List<CombineInstance>> materialGroups = new Dictionary<Material, List<CombineInstance>>();
+            string pName = parentObj.name.ToLower();
+            bool isGrass = pName.Contains("grass");
 
-            // Collect all components we'll destroy AFTER collecting mesh data
-            List<MeshRenderer> renderersToDestroy = new List<MeshRenderer>();
-            List<MeshFilter> filtersToDestroy = new List<MeshFilter>();
+            // Determine if this object type should cast shadows
+            bool shouldCastShadows = true;
+            if (isGrass || pName.Contains("road") || pName.Contains("park") ||
+                pName.Contains("lotfill") || pName.Contains("beach") || pName.Contains("ground") ||
+                pName.Contains("water") || pName.Contains("intersection"))
+            {
+                shouldCastShadows = false;
+            }
+
+            // Group by Material -> sectorKey -> List<CombineInstance>
+            // Non-grass objects use sectorKey = 0 (pure material grouping for minimal draw calls)
+            Dictionary<Material, Dictionary<long, List<CombineInstance>>> materialGroups = 
+                new Dictionary<Material, Dictionary<long, List<CombineInstance>>>();
 
             foreach (var mf in meshFilters)
             {
@@ -30,93 +44,128 @@ namespace GeoCity3D.Visuals
 
                 Mesh sharedMesh = mf.sharedMesh;
                 Material[] sharedMats = mr.sharedMaterials;
+                Matrix4x4 localMatrix = parentObj.transform.worldToLocalMatrix * mf.transform.localToWorldMatrix;
+
+                long sectorKey = 0;
+                if (isGrass)
+                {
+                    int cellX = Mathf.FloorToInt(localMatrix.m03 / GRASS_SPATIAL_CELL_SIZE);
+                    int cellZ = Mathf.FloorToInt(localMatrix.m23 / GRASS_SPATIAL_CELL_SIZE);
+                    sectorKey = ((long)cellX << 32) | (uint)cellZ;
+                }
 
                 for (int subMeshIndex = 0; subMeshIndex < sharedMesh.subMeshCount; subMeshIndex++)
                 {
-                    // Safety check if renderer has fewer materials than the mesh has submeshes
                     if (subMeshIndex >= sharedMats.Length) break;
-                    
+
                     Material mat = sharedMats[subMeshIndex];
                     if (mat == null) continue;
 
-                    if (!materialGroups.ContainsKey(mat))
-                        materialGroups[mat] = new List<CombineInstance>();
+                    if (!materialGroups.TryGetValue(mat, out var sectorMap))
+                    {
+                        sectorMap = new Dictionary<long, List<CombineInstance>>();
+                        materialGroups[mat] = sectorMap;
+                    }
+
+                    if (!sectorMap.TryGetValue(sectorKey, out var list))
+                    {
+                        list = new List<CombineInstance>();
+                        sectorMap[sectorKey] = list;
+                    }
 
                     CombineInstance ci = new CombineInstance();
                     ci.mesh = sharedMesh;
-                    ci.subMeshIndex = subMeshIndex; // Explicitly grab only this submesh
-                    ci.transform = parentObj.transform.worldToLocalMatrix * mf.transform.localToWorldMatrix;
-                    
-                    materialGroups[mat].Add(ci);
-                }
+                    ci.subMeshIndex = subMeshIndex;
+                    ci.transform = localMatrix;
 
-                // Queue for destruction AFTER all data is collected
-                renderersToDestroy.Add(mr);
-                filtersToDestroy.Add(mf);
+                    list.Add(ci);
+                }
             }
 
-            // Destroy originals only AFTER all mesh data is safely captured in CombineInstances
-            foreach (var mr in renderersToDestroy) GameObject.DestroyImmediate(mr);
-            foreach (var mf in filtersToDestroy) GameObject.DestroyImmediate(mf);
-
-            // 2. For each material group, combine meshes together
+            // Maximum vertices per combined mesh (Unity UInt32 limit allows millions, 500,000 is safe and optimal)
+            int maxVerticesPerChunk = 500000;
             int totalCombined = 0;
-            foreach (var kvp in materialGroups)
+
+            foreach (var matKvp in materialGroups)
             {
-                Material mat = kvp.Key;
-                List<CombineInstance> instances = kvp.Value;
-
-                // We use 32-bit indices allowing up to ~4 billion vertices, but Unity often struggles
-                // rendering single meshes larger than 500k vertices. We will batch responsibly.
-                int maxVerticesPerChunk = 500000; // Safer threshold for single mesh
-                
-                List<CombineInstance> currentChunk = new List<CombineInstance>();
-                int vertexCount = 0;
-
-                for (int i = 0; i < instances.Count; i++)
+                Material mat = matKvp.Key;
+                string mName = mat.name.ToLower();
+                bool matCastShadows = shouldCastShadows;
+                if (mName.Contains("grass") || mName.Contains("road") || mName.Contains("park") ||
+                    mName.Contains("lotfill") || mName.Contains("beach") || mName.Contains("ground") ||
+                    mName.Contains("water"))
                 {
-                    CombineInstance ci = instances[i];
-                    
-                    // We realistically estimate using the whole mesh vertex count per CombineInstance
-                    int estVerts = ci.mesh.vertexCount; 
+                    matCastShadows = false;
+                }
 
-                    if (vertexCount + estVerts > maxVerticesPerChunk && currentChunk.Count > 0)
+                foreach (var sectorKvp in matKvp.Value)
+                {
+                    long sectorKey = sectorKvp.Key;
+                    List<CombineInstance> instances = sectorKvp.Value;
+
+                    List<CombineInstance> currentChunk = new List<CombineInstance>();
+                    int vertexCount = 0;
+                    int subIndex = 0;
+
+                    for (int i = 0; i < instances.Count; i++)
                     {
-                        CreateCombinedChunk(parentObj.transform, mat, currentChunk, totalCombined++);
-                        currentChunk.Clear();
-                        vertexCount = 0;
+                        CombineInstance ci = instances[i];
+                        int estVerts = ci.mesh.vertexCount;
+
+                        if (vertexCount + estVerts > maxVerticesPerChunk && currentChunk.Count > 0)
+                        {
+                            CreateCombinedChunk(parentObj.transform, mat, currentChunk, $"{sectorKey}_{subIndex++}", matCastShadows);
+                            totalCombined++;
+                            currentChunk.Clear();
+                            vertexCount = 0;
+                        }
+
+                        currentChunk.Add(ci);
+                        vertexCount += estVerts;
                     }
 
-                    currentChunk.Add(ci);
-                    vertexCount += estVerts;
-                }
-
-                // Combine remainder
-                if (currentChunk.Count > 0)
-                {
-                    CreateCombinedChunk(parentObj.transform, mat, currentChunk, totalCombined++);
+                    if (currentChunk.Count > 0)
+                    {
+                        CreateCombinedChunk(parentObj.transform, mat, currentChunk, $"{sectorKey}_{subIndex}", matCastShadows);
+                        totalCombined++;
+                    }
                 }
             }
 
-            Debug.Log($"CityCombiner: Merged {meshFilters.Length} individual meshes into {totalCombined} batched chunks.");
+            // Destroy ALL original child GameObjects to leave only the combined chunks
+            // This eliminates 100,000+ empty GameObject transform nodes from the hierarchy!
+            List<GameObject> childrenToDestroy = new List<GameObject>();
+            foreach (Transform child in parentObj.transform)
+            {
+                if (!child.name.StartsWith("Chunk_"))
+                    childrenToDestroy.Add(child.gameObject);
+            }
+            foreach (var go in childrenToDestroy)
+            {
+                GameObject.DestroyImmediate(go);
+            }
+
+            Debug.Log($"CityCombiner: Merged {meshFilters.Length} objects of '{parentObj.name}' into {totalCombined} chunks (ShadowCasting: {shouldCastShadows}). Cleaned up all original GameObjects.");
         }
 
-        private static void CreateCombinedChunk(Transform parent, Material mat, List<CombineInstance> combiners, int index)
+        private static void CreateCombinedChunk(Transform parent, Material mat, List<CombineInstance> combiners, string tag, bool castShadows)
         {
-            GameObject chunkObj = new GameObject($"CombinedChunk_{mat.name}_{index}");
+            GameObject chunkObj = new GameObject($"Chunk_{mat.name}_{tag}");
             chunkObj.transform.SetParent(parent, false);
+            chunkObj.layer = parent.gameObject.layer; // Inherit layer for camera layer-based culling
 
             MeshFilter mf = chunkObj.AddComponent<MeshFilter>();
             MeshRenderer mr = chunkObj.AddComponent<MeshRenderer>();
             mr.sharedMaterial = mat;
 
             Mesh newMesh = new Mesh();
-            newMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32; // Allow large massive meshes
+            newMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             newMesh.CombineMeshes(combiners.ToArray(), true, true);
             mf.sharedMesh = newMesh;
 
-            // Disable shadow casting on buildings by default if needed, or leave it On for URP
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+            mr.shadowCastingMode = castShadows 
+                ? UnityEngine.Rendering.ShadowCastingMode.On 
+                : UnityEngine.Rendering.ShadowCastingMode.Off;
             mr.receiveShadows = true;
         }
     }
