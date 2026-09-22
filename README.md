@@ -2,12 +2,14 @@
 
 **GeoCity3D** generates real-world 3D cities in Unity from OpenStreetMap data with a single click. Clean architectural maquette style with solid, volumetric geometry — ready for urban planning, visualization, and game prototyping.
 
-<div style="display: flex; justify-content: center; gap: 8px;">
-  <img width="240" alt="Screenshot 1" src="https://github.com/user-attachments/assets/dcdbee57-a24a-450f-a098-2544b5df7b66" />
-  <img width="240" alt="Screenshot 2" src="https://github.com/user-attachments/assets/1b24a4ee-313e-4133-a616-7110c8946b69" />
-  <img width="240" alt="Screenshot 3" src="https://github.com/user-attachments/assets/38f67f7c-5f3f-4642-a326-68693a212d5b" />
-  <img width="240" alt="Screenshot 4" src="https://github.com/user-attachments/assets/09e3cc74-edeb-43d0-8d28-13c85030dcf8" />
-</div>
+<div align="center">
+  <img width="220" src="https://github.com/user-attachments/assets/1ebe3168-d560-4892-8e63-dadaf897e22d" />
+  <img width="220" src="https://github.com/user-attachments/assets/acdecc60-fd46-4627-ae5f-e8afdfe3309d" />
+  <img width="220" src="https://github.com/user-attachments/assets/edc71f8a-4d80-4560-9873-1476dcfe7892" />
+  <img width="220" src="https://github.com/user-attachments/assets/1fc4bd82-f747-48b3-879f-ea2ecf78d43c" />
+  <img width="220" src="https://github.com/user-attachments/assets/dae84ba0-9922-4b93-bc98-5ee7b4e6ecc8" />
+  <img width="220" src="https://github.com/user-attachments/assets/5cb585d2-7b81-4a98-865c-8658ccc01769" />
+</div> 
 
 ## Features
 
